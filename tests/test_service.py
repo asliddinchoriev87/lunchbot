@@ -134,6 +134,32 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(len(group_messages), 1)
         self.assertIn("Buyurtmalar va to‘lovlar", group_messages[0]["text"])
 
+    def test_forwarded_menu_album_photos_are_not_treated_as_receipts(self):
+        first = {
+            "message_id": 60,
+            "media_group_id": "album-1",
+            "text": SAMPLE_MENU,
+            "photo": [{"file_id": "food-1", "file_unique_id": "food-unique-1"}],
+            "forward_origin": {"type": "channel"},
+            "from": {"id": 1, "first_name": "Admin", "username": "admin"},
+            "chat": {"id": 1, "type": "private"},
+        }
+        extra = {
+            "message_id": 61,
+            "media_group_id": "album-1",
+            "photo": [{"file_id": "food-2", "file_unique_id": "food-unique-2"}],
+            "forward_origin": {"type": "channel"},
+            "from": {"id": 1, "first_name": "Admin", "username": "admin"},
+            "chat": {"id": 1, "type": "private"},
+        }
+
+        self.bot.handle_message(first)
+        self.bot.handle_message(extra)
+
+        self.assertEqual(len(self.telegram.sent), 1)
+        self.assertIn("Menyu topildi", self.telegram.sent[0]["text"])
+        self.assertNotIn("Bu chek avval yuborilgan", self.telegram.sent[0]["text"])
+
     def test_receipt_without_ai_is_saved_for_review(self):
         self.bot.create_menu_draft(-1001, SAMPLE_MENU)
         menu = self.bot.db.latest_menu(-1001, ("draft",))

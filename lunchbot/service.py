@@ -129,10 +129,52 @@ class LunchBot:
             return
 
         configured_group = self._configured_group()
+        if text and looks_like_menu(text):
+            if chat.get("type") == "private":
+                if configured_group is None:
+                    self.telegram.send_message(
+                        chat_id, "Avval admin guruhda /setup yuborishi kerak."
+                    )
+                    return
+                if not self._is_group_admin(configured_group, user_id):
+                    self.telegram.send_message(
+                        chat_id, "Menyuni faqat guruh admini yuborishi mumkin."
+                    )
+                    return
+                self.create_menu_draft(
+                    configured_group,
+                    text,
+                    preview_chat_id=chat_id,
+                    reply_to=message["message_id"],
+                    source_chat_id=chat_id,
+                    source_message_id=message["message_id"],
+                )
+                return
+
+            if configured_group == chat_id:
+                forwarded = bool(message.get("forward_origin"))
+                if forwarded or self._is_group_admin(chat_id, user_id):
+                    self.db.upsert_user(user_id, first_name, username)
+                    self.create_menu_draft(
+                        chat_id,
+                        text,
+                        preview_chat_id=chat_id,
+                        reply_to=message["message_id"],
+                        source_chat_id=chat_id,
+                        source_message_id=message["message_id"],
+                    )
+                return
+
         is_image = message.get("photo") or (
             message.get("document", {}).get("mime_type", "").startswith("image/")
         )
         if is_image:
+            if message.get("forward_origin") or message.get("media_group_id"):
+                LOGGER.info(
+                    "Ignoring forwarded/album image %s; it is not a payment receipt",
+                    message.get("message_id"),
+                )
+                return
             if chat.get("type") == "private" and configured_group is not None:
                 self.handle_receipt(
                     message, user_id, first_name, username, configured_group
@@ -146,42 +188,8 @@ class LunchBot:
                 )
             return
 
-        if chat.get("type") == "private" and text and looks_like_menu(text):
-            if configured_group is None:
-                self.telegram.send_message(
-                    chat_id, "Avval admin guruhda /setup yuborishi kerak."
-                )
-                return
-            if not self._is_group_admin(configured_group, user_id):
-                self.telegram.send_message(
-                    chat_id, "Menyuni faqat guruh admini yuborishi mumkin."
-                )
-                return
-            self.create_menu_draft(
-                configured_group,
-                text,
-                preview_chat_id=chat_id,
-                reply_to=message["message_id"],
-                source_chat_id=chat_id,
-                source_message_id=message["message_id"],
-            )
-            return
-
         if configured_group != chat_id:
             return
-
-        if text and looks_like_menu(text):
-            forwarded = bool(message.get("forward_origin"))
-            if forwarded or self._is_group_admin(chat_id, user_id):
-                self.db.upsert_user(user_id, first_name, username)
-                self.create_menu_draft(
-                    chat_id,
-                    text,
-                    preview_chat_id=chat_id,
-                    reply_to=message["message_id"],
-                    source_chat_id=chat_id,
-                    source_message_id=message["message_id"],
-                )
 
     def handle_command(
         self,
