@@ -66,6 +66,23 @@ class TelegramClient:
             payload["reply_parameters"] = {"message_id": reply_to_message_id}
         return self.call("sendMessage", payload)
 
+    def send_photo(
+        self,
+        chat_id: int,
+        file_id: str,
+        caption: str,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo": file_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return self.call("sendPhoto", payload)
+
     def edit_message(
         self, chat_id: int, message_id: int, text: str, reply_markup: dict | None = None
     ) -> dict:
@@ -79,6 +96,19 @@ class TelegramClient:
         if reply_markup:
             payload["reply_markup"] = reply_markup
         return self.call("editMessageText", payload)
+
+    def edit_caption(
+        self, chat_id: int, message_id: int, caption: str, reply_markup: dict | None = None
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        return self.call("editMessageCaption", payload)
 
     def answer_callback(self, callback_query_id: str, text: str = "", alert: bool = False) -> None:
         self.call(

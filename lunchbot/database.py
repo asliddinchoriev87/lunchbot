@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     first_name TEXT NOT NULL,
     username TEXT,
+    private_chat_id INTEGER,
     active INTEGER NOT NULL DEFAULT 1,
     registered_at TEXT NOT NULL
 );
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS menus (
     free_delivery_min INTEGER,
     status TEXT NOT NULL DEFAULT 'draft',
     order_message_id INTEGER,
+    source_chat_id INTEGER,
     source_message_id INTEGER,
     created_at TEXT NOT NULL
 );
@@ -59,6 +61,7 @@ CREATE TABLE IF NOT EXISTS payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     file_unique_id TEXT,
+    telegram_file_id TEXT,
     image_hash TEXT NOT NULL UNIQUE,
     expected_amount INTEGER NOT NULL,
     extracted_amount INTEGER,
@@ -100,10 +103,36 @@ class Database:
             self.connection.execute(
                 "ALTER TABLE menus ADD COLUMN source_message_id INTEGER"
             )
+        if "source_chat_id" not in columns:
+            self.connection.execute(
+                "ALTER TABLE menus ADD COLUMN source_chat_id INTEGER"
+            )
+        self.connection.execute(
+            "UPDATE menus SET source_chat_id=chat_id "
+            "WHERE source_message_id IS NOT NULL AND source_chat_id IS NULL"
+        )
+        self.connection.execute("DROP INDEX IF EXISTS idx_menus_source")
         self.connection.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_menus_source "
-            "ON menus(chat_id, source_message_id) WHERE source_message_id IS NOT NULL"
+            "ON menus(chat_id, source_chat_id, source_message_id) "
+            "WHERE source_chat_id IS NOT NULL AND source_message_id IS NOT NULL"
         )
+        user_columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(users)").fetchall()
+        }
+        if "private_chat_id" not in user_columns:
+            self.connection.execute(
+                "ALTER TABLE users ADD COLUMN private_chat_id INTEGER"
+            )
+        payment_columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(payments)").fetchall()
+        }
+        if "telegram_file_id" not in payment_columns:
+            self.connection.execute(
+                "ALTER TABLE payments ADD COLUMN telegram_file_id TEXT"
+            )
 
     def close(self) -> None:
         self.connection.close()
@@ -120,23 +149,40 @@ class Database:
         row = self.connection.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
 
-    def upsert_user(self, user_id: int, first_name: str, username: str | None) -> None:
+    def upsert_user(
+        self,
+        user_id: int,
+        first_name: str,
+        username: str | None,
+        private_chat_id: int | None = None,
+    ) -> None:
         self.connection.execute(
-            """INSERT INTO users(user_id, first_name, username, active, registered_at)
-               VALUES(?, ?, ?, 1, ?)
+            """INSERT INTO users(
+                 user_id, first_name, username, private_chat_id, active, registered_at
+               ) VALUES(?, ?, ?, ?, 1, ?)
                ON CONFLICT(user_id) DO UPDATE SET
-                 first_name=excluded.first_name, username=excluded.username, active=1""",
-            (user_id, first_name or "Telegram user", username, utc_now()),
+                 first_name=excluded.first_name,
+                 username=excluded.username,
+                 private_chat_id=COALESCE(excluded.private_chat_id, users.private_chat_id),
+                 active=1""",
+            (user_id, first_name or "Telegram user", username, private_chat_id, utc_now()),
         )
         self.connection.commit()
 
     def create_menu(
-        self, chat_id: int, menu: ParsedMenu, source_message_id: int | None = None
+        self,
+        chat_id: int,
+        menu: ParsedMenu,
+        source_chat_id: int | None = None,
+        source_message_id: int | None = None,
     ) -> int | None:
+        if source_message_id is not None and source_chat_id is None:
+            source_chat_id = chat_id
         if source_message_id is not None:
             existing = self.connection.execute(
-                "SELECT id FROM menus WHERE chat_id=? AND source_message_id=?",
-                (chat_id, source_message_id),
+                "SELECT id FROM menus "
+                "WHERE chat_id=? AND source_chat_id=? AND source_message_id=?",
+                (chat_id, source_chat_id, source_message_id),
             ).fetchone()
             if existing:
                 return None
@@ -144,8 +190,9 @@ class Database:
             cursor = self.connection.execute(
                 """INSERT INTO menus(
                      chat_id, menu_date, raw_text, portion_price, delivery_fee,
-                     free_delivery_min, status, source_message_id, created_at
-                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
+                     free_delivery_min, status, source_chat_id, source_message_id,
+                     created_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""",
                 (
                     chat_id,
                     menu.menu_date.isoformat(),
@@ -153,6 +200,7 @@ class Database:
                     menu.portion_price,
                     menu.delivery_fee,
                     menu.free_delivery_min,
+                    source_chat_id,
                     source_message_id,
                     utc_now(),
                 ),
@@ -292,7 +340,12 @@ class Database:
 
     def latest_order_for_user(self, chat_id: int, user_id: int) -> sqlite3.Row | None:
         return self.connection.execute(
-            """SELECT o.id AS order_id, o.menu_id, mi.price, mi.name AS meal_name, m.menu_date
+            """SELECT o.id AS order_id, o.menu_id, mi.price, mi.name AS meal_name,
+                      m.menu_date, m.status AS menu_status,
+                      COALESCE((
+                        SELECT p.status FROM payments p
+                        WHERE p.order_id=o.id ORDER BY p.id DESC LIMIT 1
+                      ), 'unpaid') AS payment_status
                FROM orders o
                JOIN menus m ON m.id=o.menu_id
                JOIN menu_items mi ON mi.id=o.item_id
@@ -300,6 +353,39 @@ class Database:
                ORDER BY m.id DESC LIMIT 1""",
             (chat_id, user_id),
         ).fetchone()
+
+    def order_for_user(self, menu_id: int, user_id: int) -> sqlite3.Row | None:
+        return self.connection.execute(
+            """SELECT o.id AS order_id, o.menu_id, mi.price, mi.name AS meal_name,
+                      m.menu_date, m.status AS menu_status,
+                      COALESCE((
+                        SELECT p.status FROM payments p
+                        WHERE p.order_id=o.id ORDER BY p.id DESC LIMIT 1
+                      ), 'unpaid') AS payment_status
+               FROM orders o
+               JOIN menus m ON m.id=o.menu_id
+               JOIN menu_items mi ON mi.id=o.item_id
+               WHERE o.menu_id=? AND o.user_id=?""",
+            (menu_id, user_id),
+        ).fetchone()
+
+    def payments_for_menu(self, menu_id: int) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """SELECT p.*, u.first_name, mi.name AS meal_name, m.chat_id, m.id AS menu_id
+                   FROM payments p
+                   JOIN orders o ON o.id=p.order_id
+                   JOIN users u ON u.user_id=o.user_id
+                   JOIN menu_items mi ON mi.id=o.item_id
+                   JOIN menus m ON m.id=o.menu_id
+                   WHERE o.menu_id=? AND p.id=(
+                     SELECT p2.id FROM payments p2
+                     WHERE p2.order_id=o.id ORDER BY p2.id DESC LIMIT 1
+                   )
+                   ORDER BY u.first_name COLLATE NOCASE""",
+                (menu_id,),
+            ).fetchall()
+        )
 
     def add_payment(
         self,
@@ -310,16 +396,19 @@ class Database:
         analysis: ReceiptAnalysis,
         status: str,
         note: str,
+        telegram_file_id: str | None = None,
     ) -> int:
         cursor = self.connection.execute(
             """INSERT INTO payments(
-                 order_id, file_unique_id, image_hash, expected_amount, extracted_amount,
+                 order_id, file_unique_id, telegram_file_id, image_hash,
+                 expected_amount, extracted_amount,
                  recipient_name, transaction_time, confidence, success_visible,
                  status, note, created_at
-               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 order_id,
                 file_unique_id,
+                telegram_file_id,
                 image_hash,
                 expected_amount,
                 analysis.amount,
@@ -341,11 +430,13 @@ class Database:
 
     def get_payment(self, payment_id: int) -> sqlite3.Row | None:
         return self.connection.execute(
-            """SELECT p.*, u.first_name, mi.name AS meal_name
+            """SELECT p.*, u.first_name, mi.name AS meal_name,
+                      m.chat_id, m.id AS menu_id
                FROM payments p
                JOIN orders o ON o.id=p.order_id
                JOIN users u ON u.user_id=o.user_id
                JOIN menu_items mi ON mi.id=o.item_id
+               JOIN menus m ON m.id=o.menu_id
                WHERE p.id=?""",
             (payment_id,),
         ).fetchone()

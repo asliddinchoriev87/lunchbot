@@ -14,6 +14,14 @@ PAYMENT_LABELS = {
     "rejected": "⛔ Rad etilgan",
 }
 
+PAYMENT_ICONS = {
+    "unpaid": "❌",
+    "needs_review": "🟡",
+    "ai_matched": "☑️",
+    "verified": "✅",
+    "rejected": "⛔",
+}
+
 
 def money(value: int) -> str:
     return f"{value:,}".replace(",", " ") + " so‘m"
@@ -41,20 +49,33 @@ def menu_preview(menu: ParsedMenu) -> str:
     )
 
 
-def ordering_text(menu_row, items: list) -> str:
+def private_order_text(menu_row, items: list, order=None) -> str:
     item_lines = "\n".join(
         f"{row['position']}. {escape(row['name'])}" for row in items
+    )
+    selected = (
+        f"\n\nSizning tanlovingiz: <b>{escape(order['meal_name'])}</b>\n"
+        f"To‘lov: <b>{PAYMENT_LABELS[order['payment_status']]}</b>"
+        if order
+        else "\n\nHali taom tanlamadingiz."
+    )
+    status = "ochiq" if menu_row["status"] == "open" else "yopilgan"
+    instruction = (
+        "Taomni quyidagi tugmalardan tanlang. Chek rasmini shu shaxsiy chatga yuboring."
+        if menu_row["status"] == "open"
+        else "Buyurtma yopilgan. To‘lov chekini shu shaxsiy chatga yuborishingiz mumkin."
     )
     return (
         f"<b>🍽 Bugungi tushlik — {menu_row['menu_date']}</b>\n\n"
         f"{item_lines}\n\n"
         f"Narx: <b>{money(menu_row['portion_price'])}</b>\n"
-        "Taomni tugma orqali tanlang. Admin buyurtmani yopmaguncha "
-        "tanlovni o‘zgartirish mumkin."
+        f"Holat: <b>{status}</b>"
+        f"{selected}\n\n"
+        f"{instruction}"
     )
 
 
-def order_keyboard(menu_id: int, items: list) -> dict:
+def private_order_keyboard(menu_id: int, items: list) -> dict:
     return {
         "inline_keyboard": [
             [
@@ -65,21 +86,84 @@ def order_keyboard(menu_id: int, items: list) -> dict:
             ]
             for row in items
         ]
-        + [
-            [
-                {
-                    "text": "🔒 Buyurtmani yopish",
-                    "callback_data": f"menu_close:{menu_id}",
-                }
-            ]
-        ]
     }
 
 
-def registration_keyboard() -> dict:
+def group_dashboard_text(menu_row, items: list, summary: OrderSummary) -> str:
+    item_lines = "\n".join(
+        f"{row['position']}. {escape(row['name'])}" for row in items
+    )
+    grouped: OrderedDict[str, list[dict]] = OrderedDict()
+    for row in summary.rows:
+        grouped.setdefault(row["meal_name"], []).append(row)
+
+    sections: list[str] = []
+    for meal, rows in grouped.items():
+        people = ", ".join(
+            f"{escape(row['first_name'][:24])} {PAYMENT_ICONS[row['payment_status']]}"
+            for row in rows
+        )
+        sections.append(f"<b>{escape(meal)} — {len(rows)} ta</b>\n{people}")
+    orders = "\n\n".join(sections) if sections else "Hali buyurtma yo‘q."
+    delivery = "Bepul" if summary.applied_delivery_fee == 0 else money(summary.applied_delivery_fee)
+    state = "🟢 Ochiq" if menu_row["status"] == "open" else "🔒 Yopilgan"
+    return (
+        f"<b>🍽 Bugungi tushlik — {menu_row['menu_date']}</b>\n"
+        f"Holat: <b>{state}</b>\n\n"
+        f"{item_lines}\n\n"
+        f"Narx: <b>{money(menu_row['portion_price'])}</b>\n\n"
+        f"<b>📋 Buyurtmalar va to‘lovlar</b>\n{orders}\n\n"
+        f"Porsiyalar: <b>{summary.portion_count}</b> | "
+        f"Jami: <b>{money(summary.grand_total)}</b> | "
+        f"Yetkazish: <b>{delivery}</b>\n"
+        "To‘lov: ❌ yo‘q · 🟡 tekshirish · ☑️ AI mos · ✅ tasdiq"
+    )
+
+
+def group_dashboard_keyboard(menu_id: int, bot_username: str, is_open: bool) -> dict:
+    rows = []
+    if is_open:
+        rows.append(
+            [
+                {
+                    "text": "🍽 Taom tanlash — shaxsiy chat",
+                    "url": f"https://t.me/{bot_username}?start=order_{menu_id}",
+                }
+            ]
+        )
+        rows.append(
+            [
+                {
+                    "text": "🧾 Admin panel",
+                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
+                },
+                {
+                    "text": "🔒 Buyurtmani yopish",
+                    "callback_data": f"menu_close:{menu_id}",
+                },
+            ]
+        )
+    else:
+        rows.append(
+            [
+                {
+                    "text": "🧾 Admin panel",
+                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
+                }
+            ]
+        )
+    return {"inline_keyboard": rows}
+
+
+def registration_keyboard(bot_username: str) -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "✅ Ro‘yxatdan o‘tish", "callback_data": "register"}]
+            [
+                {
+                    "text": "✅ Botni shaxsiy chatda ochish",
+                    "url": f"https://t.me/{bot_username}?start=register",
+                }
+            ]
         ]
     }
 

@@ -7,8 +7,9 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Detects a forwarded Russian-language menu.
 - Extracts the date, meal names, portion price and delivery rule.
 - Lets an admin confirm the menu before ordering opens.
-- Uses Telegram buttons so each member can choose or change one meal.
-- Reminds only registered members who have not ordered at 10:20, 10:35 and 10:50.
+- Keeps one live dashboard in the group with the menu, names, orders and payment statuses.
+- Moves meal selection, receipts and personal status into each member's private bot chat.
+- Sends private reminders only to members who have not ordered at 10:20, 10:35 and 10:50.
 - Keeps ordering open until an admin closes it.
 - Ignores duplicate delivery of the same forwarded Telegram message.
 - Creates both a caterer-ready order and an internal summary.
@@ -47,7 +48,7 @@ Review Render's displayed monthly cost before applying the Blueprint. A persiste
 3. Open **Bot Settings → Group Privacy → Turn off**.
 4. Never publish or send your bot token in a group.
 
-Turning off Group Privacy is required for automatic detection of forwarded menu messages and receipt images.
+Turning off Group Privacy is required for automatic detection of forwarded menu messages.
 
 ### 2. Add private settings
 
@@ -74,29 +75,30 @@ The `/data` volume preserves orders and payments after a restart.
 1. Add the bot to the private group.
 2. Make the bot an admin. It only needs permission to read and send messages.
 3. An admin sends `/setup` in the group.
-4. Every member presses **Register** once.
+4. Every member presses **Open bot privately** once and starts the bot.
 
-Telegram does not allow a bot to automatically retrieve every group member. Registration is necessary for targeted missing-order reminders.
+Telegram does not allow a bot to automatically retrieve every group member or message a person before they start the bot. Opening the private chat once is necessary for private reminders.
 
 ## Daily use
 
-1. Forward the caterer's menu to the private group.
-2. The bot shows an extracted preview.
-3. An admin presses **Confirm**.
-4. Members choose a meal using the buttons.
-5. The bot sends targeted reminders while ordering remains open.
-6. An admin presses **Close order** when everyone is finished.
-7. Members send payment screenshots after ordering.
-8. The bot matches each screenshot to its sender and adds the payment status.
+1. An admin forwards the caterer's menu to the bot's private chat.
+2. The bot shows the extracted preview privately to that admin.
+3. The admin presses **Confirm**. The bot publishes the single live group dashboard.
+4. Members press **Choose meal — private chat** and select food inside the bot.
+5. The bot updates the same group dashboard instead of posting new order messages.
+6. Private reminders are sent while ordering remains open.
+7. Members send payment screenshots to the bot's private chat.
+8. The bot updates payment status beside each member's name on the group dashboard.
+9. An admin opens the private admin panel to review payments and closes the order from the dashboard.
 
 If a forwarded menu is not detected, an admin can reply to that message with `/menu`.
 
 ## Commands
 
 - `/setup` — connect the current group; admin only.
-- `/register` — register for reminders.
+- `/register` — open private registration instructions.
 - `/menu` — parse the message being replied to; admin only.
-- `/orders` — show the latest order summary.
+- `/orders` — show personal order status in private chat; refresh the dashboard in the group.
 - `/close` — close the current order; admin only.
 - `/help` — show instructions.
 
@@ -110,7 +112,8 @@ python -m unittest discover -s tests -v
 
 - Data stays in the bot's SQLite database.
 - Card and phone numbers are removed before menu text is stored.
-- Receipt images are downloaded for analysis but are not saved by LunchBot.
+- Receipt images are downloaded for analysis but are not saved as files by LunchBot.
+- A Telegram file reference is stored so an admin can review the receipt privately.
 - A SHA-256 fingerprint is stored to detect a duplicated receipt.
 - If OpenAI receipt reading is enabled, the receipt image is sent to the OpenAI API with `store: false`.
 
