@@ -83,6 +83,17 @@ class TelegramClient:
             payload["reply_markup"] = reply_markup
         return self.call("sendPhoto", payload)
 
+    def send_media_group(
+        self, chat_id: int, file_ids: list[str], caption: str = ""
+    ) -> list[dict]:
+        media = []
+        for index, file_id in enumerate(file_ids):
+            item: dict[str, Any] = {"type": "photo", "media": file_id}
+            if index == 0 and caption:
+                item.update({"caption": caption, "parse_mode": "HTML"})
+            media.append(item)
+        return self.call("sendMediaGroup", {"chat_id": chat_id, "media": media})
+
     def edit_message(
         self, chat_id: int, message_id: int, text: str, reply_markup: dict | None = None
     ) -> dict:

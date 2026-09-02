@@ -17,6 +17,7 @@ from .formatting import (
     admin_menu_keyboard,
     group_dashboard_keyboard,
     group_dashboard_text,
+    full_orders_pages,
     menu_preview,
     mention,
     money,
@@ -103,6 +104,11 @@ class LunchBot:
         value = self.db.get_setting("group_chat_id")
         return int(value) if value else None
 
+    @staticmethod
+    def _photo_file_id(message: dict) -> str | None:
+        photos = message.get("photo") or []
+        return photos[-1].get("file_id") if photos else None
+
     def _is_group_admin(self, chat_id: int, user_id: int) -> bool:
         try:
             return self.telegram.is_admin(chat_id, user_id)
@@ -148,6 +154,8 @@ class LunchBot:
                     reply_to=message["message_id"],
                     source_chat_id=chat_id,
                     source_message_id=message["message_id"],
+                    media_group_id=message.get("media_group_id"),
+                    photo_file_id=self._photo_file_id(message),
                 )
                 return
 
@@ -162,6 +170,8 @@ class LunchBot:
                         reply_to=message["message_id"],
                         source_chat_id=chat_id,
                         source_message_id=message["message_id"],
+                        media_group_id=message.get("media_group_id"),
+                        photo_file_id=self._photo_file_id(message),
                     )
                 return
 
@@ -169,7 +179,18 @@ class LunchBot:
             message.get("document", {}).get("mime_type", "").startswith("image/")
         )
         if is_image:
-            if message.get("forward_origin") or message.get("media_group_id"):
+            if message.get("media_group_id") and configured_group is not None:
+                menu = self.db.menu_for_album(
+                    configured_group, chat_id, message["media_group_id"]
+                )
+                file_id = self._photo_file_id(message)
+                if menu and file_id:
+                    self.db.add_menu_photo(menu["id"], message["message_id"], file_id)
+                LOGGER.info(
+                    "Stored or ignored menu album image %s", message.get("message_id")
+                )
+                return
+            if message.get("forward_origin"):
                 LOGGER.info(
                     "Ignoring forwarded/album image %s; it is not a payment receipt",
                     message.get("message_id"),
@@ -224,6 +245,14 @@ class LunchBot:
                     self.telegram.send_message(chat_id, "Admin havolasi noto‘g‘ri.")
                     return
                 self.show_admin_panel(chat_id, user_id, menu_id)
+                return
+            if command == "/start" and argument.startswith("fullorders_"):
+                try:
+                    menu_id = int(argument.removeprefix("fullorders_"))
+                except ValueError:
+                    self.telegram.send_message(chat_id, "Buyurtmalar havolasi noto‘g‘ri.")
+                    return
+                self.show_full_orders(chat_id, user_id, menu_id)
                 return
             if command == "/orders":
                 self.show_personal_status(chat_id, user_id)
@@ -326,6 +355,8 @@ class LunchBot:
         reply_to: int | None = None,
         source_chat_id: int | None = None,
         source_message_id: int | None = None,
+        media_group_id: str | None = None,
+        photo_file_id: str | None = None,
     ) -> None:
         try:
             try:
@@ -339,6 +370,7 @@ class LunchBot:
                 parsed,
                 source_chat_id=source_chat_id,
                 source_message_id=source_message_id,
+                media_group_id=media_group_id,
             )
             if menu_id is None:
                 LOGGER.info(
@@ -347,6 +379,8 @@ class LunchBot:
                     chat_id,
                 )
                 return
+            if photo_file_id and source_message_id is not None:
+                self.db.add_menu_photo(menu_id, source_message_id, photo_file_id)
             self.telegram.send_message(
                 preview_chat_id or chat_id,
                 menu_preview(parsed),
@@ -397,6 +431,7 @@ class LunchBot:
                 self.db.set_order_message_id(menu_id, message["message_id"])
                 self.refresh_group_dashboard(menu_id)
             else:
+                self.publish_menu_photos(menu_id)
                 self.refresh_group_dashboard(menu_id)
                 self.telegram.edit_message(
                     chat_id,
@@ -640,6 +675,25 @@ class LunchBot:
                     return
             LOGGER.exception("Could not refresh group dashboard for menu %s", menu_id)
 
+    def publish_menu_photos(self, menu_id: int) -> None:
+        menu = self.db.get_menu(menu_id)
+        if not menu or menu["source_chat_id"] == menu["chat_id"]:
+            return
+        file_ids = [row["telegram_file_id"] for row in self.db.menu_photos(menu_id)]
+        try:
+            for start in range(0, len(file_ids), 10):
+                batch = file_ids[start : start + 10]
+                if len(batch) == 1:
+                    self.telegram.send_photo(
+                        menu["chat_id"], batch[0], "<b>📸 Bugungi taomlar</b>"
+                    )
+                elif batch:
+                    self.telegram.send_media_group(
+                        menu["chat_id"], batch, "<b>📸 Bugungi taomlar</b>"
+                    )
+        except TelegramError:
+            LOGGER.exception("Could not publish menu photos for menu %s", menu_id)
+
     def show_private_order(self, chat_id: int, user_id: int, menu_id: int) -> None:
         menu = self.db.get_menu(menu_id)
         configured_group = self._configured_group()
@@ -711,3 +765,11 @@ class LunchBot:
                 self.telegram.send_message(
                     chat_id, caption, payment_keyboard(payment["id"])
                 )
+
+    def show_full_orders(self, chat_id: int, user_id: int, menu_id: int) -> None:
+        menu = self.db.get_menu(menu_id)
+        if not menu or not self._is_group_admin(menu["chat_id"], user_id):
+            self.telegram.send_message(chat_id, "Faqat guruh admini uchun.")
+            return
+        for page in full_orders_pages(self.db.order_summary(menu_id)):
+            self.telegram.send_message(chat_id, page)

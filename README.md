@@ -12,7 +12,8 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Sends private reminders only to members who have not ordered at 10:20, 10:35 and 10:50.
 - Keeps ordering open until an admin closes it.
 - Ignores repeated Telegram updates and repeated copies of the same menu within 10 minutes.
-- Treats a forwarded menu album as one menu and ignores its extra food photos.
+- Treats a forwarded menu album as one menu and publishes all food photos to the group.
+- Gives admins a private **Full orders** list with every meal and payment status.
 - Persists Telegram's update position so restarts do not replay old menus.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
@@ -85,13 +86,13 @@ Telegram does not allow a bot to automatically retrieve every group member or me
 
 1. An admin forwards the caterer's menu to the bot's private chat.
 2. The bot shows the extracted preview privately to that admin.
-3. The admin presses **Confirm**. The bot publishes the single live group dashboard.
+3. The admin presses **Confirm**. The bot publishes the menu photos and the single live group dashboard.
 4. Members press **Choose meal — private chat** and select food inside the bot.
 5. The bot updates the same group dashboard instead of posting new order messages.
 6. Private reminders are sent while ordering remains open.
 7. Members send payment screenshots to the bot's private chat.
 8. The bot updates payment status beside each member's name on the group dashboard.
-9. An admin opens the private admin panel to review payments and closes the order from the dashboard.
+9. An admin opens **Full orders** to see every order and payment status, reviews receipts in the payment panel, and closes the order from the dashboard.
 
 If a forwarded menu is not detected, an admin can reply to that message with `/menu`.
 

@@ -27,10 +27,18 @@ class DatabaseTests(unittest.TestCase):
 
     def test_registration_order_update_and_summary(self):
         menu_id = self.db.create_menu(
-            -1001, self.menu, source_chat_id=7, source_message_id=55
+            -1001, self.menu, source_chat_id=7, source_message_id=55,
+            media_group_id="album-1",
         )
         self.assertEqual(self.db.get_menu(menu_id)["source_message_id"], 55)
         self.assertEqual(self.db.get_menu(menu_id)["source_chat_id"], 7)
+        self.assertEqual(self.db.get_menu(menu_id)["media_group_id"], "album-1")
+        self.db.add_menu_photo(menu_id, 55, "photo-1")
+        self.db.add_menu_photo(menu_id, 56, "photo-2")
+        self.assertEqual(
+            [row["telegram_file_id"] for row in self.db.menu_photos(menu_id)],
+            ["photo-1", "photo-2"],
+        )
         self.assertIsNone(
             self.db.create_menu(
                 -1001, self.menu, source_chat_id=7, source_message_id=55
@@ -109,6 +117,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("telegram_file_id", payment_columns)
         self.assertIn("source_chat_id", menu_columns)
         self.assertIn("dedupe_key", menu_columns)
+        self.assertIn("media_group_id", menu_columns)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ class FakeTelegram:
         self.edited = []
         self.answers = []
         self.photos = []
+        self.media_groups = []
         self.admin_ids = {1}
         self.edit_error = None
 
@@ -44,6 +45,14 @@ class FakeTelegram:
     def send_photo(self, chat_id, file_id, caption, reply_markup=None):
         result = {"message_id": len(self.sent) + len(self.photos) + 100}
         self.photos.append((chat_id, file_id, caption, reply_markup))
+        return result
+
+    def send_media_group(self, chat_id, file_ids, caption=""):
+        result = [
+            {"message_id": len(self.sent) + len(self.photos) + index + 100}
+            for index, _ in enumerate(file_ids)
+        ]
+        self.media_groups.append((chat_id, file_ids, caption))
         return result
 
     def answer_callback(self, callback_query_id, text="", alert=False):
@@ -159,6 +168,40 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.telegram.sent), 1)
         self.assertIn("Menyu topildi", self.telegram.sent[0]["text"])
         self.assertNotIn("Bu chek avval yuborilgan", self.telegram.sent[0]["text"])
+
+        draft = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.handle_callback(
+            {
+                "id": "confirm-album",
+                "data": f"menu_confirm:{draft['id']}",
+                "from": {"id": 1, "first_name": "Admin"},
+                "message": {
+                    "message_id": self.telegram.sent[0]["message_id"],
+                    "text": "Menu preview",
+                    "chat": {"id": 1, "type": "private"},
+                },
+            }
+        )
+        self.assertEqual(self.telegram.media_groups[0][0], -1001)
+        self.assertEqual(self.telegram.media_groups[0][1], ["food-1", "food-2"])
+        group_messages = [row for row in self.telegram.sent if row["chat_id"] == -1001]
+        self.assertEqual(len(group_messages), 1)
+
+    def test_full_orders_button_is_admin_only_and_shows_payment_status(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU)
+        menu = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.db.confirm_menu(menu["id"])
+        item = self.bot.db.get_menu_items(menu["id"])[0]
+        self.bot.db.upsert_user(7, "User", "user", private_chat_id=7)
+        self.bot.db.set_order(menu["id"], 7, item["id"])
+
+        self.bot.show_full_orders(1, 1, menu["id"])
+        self.assertIn("Full orders", self.telegram.sent[-1]["text"])
+        self.assertIn("User", self.telegram.sent[-1]["text"])
+        self.assertIn("To‘lanmagan", self.telegram.sent[-1]["text"])
+
+        self.bot.show_full_orders(8, 8, menu["id"])
+        self.assertEqual(self.telegram.sent[-1]["text"], "Faqat guruh admini uchun.")
 
     def test_receipt_without_ai_is_saved_for_review(self):
         self.bot.create_menu_draft(-1001, SAMPLE_MENU)

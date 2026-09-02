@@ -34,8 +34,16 @@ CREATE TABLE IF NOT EXISTS menus (
     order_message_id INTEGER,
     source_chat_id INTEGER,
     source_message_id INTEGER,
+    media_group_id TEXT,
     dedupe_key TEXT,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS menu_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+    source_message_id INTEGER NOT NULL,
+    telegram_file_id TEXT NOT NULL,
+    UNIQUE(menu_id, source_message_id)
 );
 CREATE TABLE IF NOT EXISTS menu_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,6 +121,10 @@ class Database:
             self.connection.execute(
                 "ALTER TABLE menus ADD COLUMN dedupe_key TEXT"
             )
+        if "media_group_id" not in columns:
+            self.connection.execute(
+                "ALTER TABLE menus ADD COLUMN media_group_id TEXT"
+            )
         self.connection.execute(
             "UPDATE menus SET source_chat_id=chat_id "
             "WHERE source_message_id IS NOT NULL AND source_chat_id IS NULL"
@@ -185,6 +197,7 @@ class Database:
         menu: ParsedMenu,
         source_chat_id: int | None = None,
         source_message_id: int | None = None,
+        media_group_id: str | None = None,
     ) -> int | None:
         if source_message_id is not None and source_chat_id is None:
             source_chat_id = chat_id
@@ -213,8 +226,8 @@ class Database:
                 """INSERT INTO menus(
                      chat_id, menu_date, raw_text, portion_price, delivery_fee,
                      free_delivery_min, status, source_chat_id, source_message_id,
-                     dedupe_key, created_at
-                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)""",
+                     media_group_id, dedupe_key, created_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)""",
                 (
                     chat_id,
                     menu.menu_date.isoformat(),
@@ -224,6 +237,7 @@ class Database:
                     menu.free_delivery_min,
                     source_chat_id,
                     source_message_id,
+                    media_group_id,
                     dedupe_key,
                     now.isoformat(),
                 ),
@@ -243,6 +257,33 @@ class Database:
         )
         self.connection.commit()
         return menu_id
+
+    def menu_for_album(
+        self, chat_id: int, source_chat_id: int, media_group_id: str
+    ) -> sqlite3.Row | None:
+        return self.connection.execute(
+            "SELECT * FROM menus WHERE chat_id=? AND source_chat_id=? "
+            "AND media_group_id=? ORDER BY id DESC LIMIT 1",
+            (chat_id, source_chat_id, media_group_id),
+        ).fetchone()
+
+    def add_menu_photo(
+        self, menu_id: int, source_message_id: int, telegram_file_id: str
+    ) -> None:
+        self.connection.execute(
+            "INSERT OR IGNORE INTO menu_photos(menu_id, source_message_id, telegram_file_id) "
+            "VALUES(?, ?, ?)",
+            (menu_id, source_message_id, telegram_file_id),
+        )
+        self.connection.commit()
+
+    def menu_photos(self, menu_id: int) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM menu_photos WHERE menu_id=? ORDER BY source_message_id",
+                (menu_id,),
+            ).fetchall()
+        )
 
     def get_menu(self, menu_id: int) -> sqlite3.Row | None:
         return self.connection.execute("SELECT * FROM menus WHERE id=?", (menu_id,)).fetchone()

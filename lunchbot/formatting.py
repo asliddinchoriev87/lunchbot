@@ -134,25 +134,64 @@ def group_dashboard_keyboard(menu_id: int, bot_username: str, is_open: bool) -> 
         rows.append(
             [
                 {
-                    "text": "🧾 Admin panel",
-                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
+                    "text": "📋 Full orders (admin)",
+                    "url": f"https://t.me/{bot_username}?start=fullorders_{menu_id}",
                 },
+                {
+                    "text": "🧾 To‘lovlarni tekshirish",
+                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
+                }
+            ]
+        )
+        rows.append(
+            [
                 {
                     "text": "🔒 Buyurtmani yopish",
                     "callback_data": f"menu_close:{menu_id}",
-                },
+                }
             ]
         )
     else:
         rows.append(
             [
                 {
-                    "text": "🧾 Admin panel",
+                    "text": "📋 Full orders (admin)",
+                    "url": f"https://t.me/{bot_username}?start=fullorders_{menu_id}",
+                },
+                {
+                    "text": "🧾 To‘lovlarni tekshirish",
                     "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
                 }
             ]
         )
     return {"inline_keyboard": rows}
+
+
+def full_orders_pages(summary: OrderSummary, page_size: int = 35) -> list[str]:
+    rows = summary.rows
+    page_count = max(1, (len(rows) + page_size - 1) // page_size)
+    verified = sum(row["payment_status"] == "verified" for row in rows)
+    ai_matched = sum(row["payment_status"] == "ai_matched" for row in rows)
+    review = sum(row["payment_status"] == "needs_review" for row in rows)
+    unpaid = sum(row["payment_status"] == "unpaid" for row in rows)
+    pages: list[str] = []
+    for page_index in range(page_count):
+        start = page_index * page_size
+        page_rows = rows[start : start + page_size]
+        lines = [
+            f"{start + index}. <b>{escape(row['first_name'][:40])}</b> — "
+            f"{escape(row['meal_name'][:60])} — {PAYMENT_LABELS[row['payment_status']]}"
+            for index, row in enumerate(page_rows, 1)
+        ]
+        body = "\n".join(lines) if lines else "Hali buyurtma yo‘q."
+        page_label = f" ({page_index + 1}/{page_count})" if page_count > 1 else ""
+        pages.append(
+            f"<b>📋 Full orders — {escape(summary.menu_date)}{page_label}</b>\n\n"
+            f"{body}\n\n"
+            f"Jami: <b>{summary.portion_count}</b> · "
+            f"✅ {verified} · ☑️ {ai_matched} · 🟡 {review} · ❌ {unpaid}"
+        )
+    return pages
 
 
 def registration_keyboard(bot_username: str) -> dict:
