@@ -26,7 +26,7 @@ from .formatting import (
     summary_text,
 )
 from .parsing import looks_like_menu, parse_menu
-from .scheduler import due_action, parse_clock
+from .scheduler import due_action
 from .telegram_api import TelegramClient, TelegramError
 
 
@@ -130,7 +130,13 @@ class LunchBot:
         if text and looks_like_menu(text):
             forwarded = bool(message.get("forward_origin"))
             if forwarded or self._is_group_admin(chat_id, user_id):
-                self.create_menu_draft(chat_id, text, message["message_id"])
+                self.db.upsert_user(user_id, first_name, username)
+                self.create_menu_draft(
+                    chat_id,
+                    text,
+                    reply_to=message["message_id"],
+                    source_message_id=message["message_id"],
+                )
 
     def handle_command(
         self,
@@ -151,6 +157,7 @@ class LunchBot:
                 "Admin: guruhda /setup yuboring.\n"
                 "A’zolar: /register yuboring yoki ro‘yxatdan o‘tish tugmasini bosing.\n"
                 "Menyu: oshxona xabarini guruhga forward qiling.\n"
+                "Yopish: admin Close tugmasini bosadi.\n"
                 "To‘lov: buyurtmadan keyin chek rasmini guruhga yuboring.",
             )
             return
@@ -194,7 +201,13 @@ class LunchBot:
             if not source_text:
                 self.telegram.send_message(chat_id, "Menyu xabariga reply qilib /menu yuboring.")
                 return
-            self.create_menu_draft(chat_id, source_text, message["message_id"])
+            self.db.upsert_user(user_id, first_name, username)
+            self.create_menu_draft(
+                chat_id,
+                source_text,
+                reply_to=message["message_id"],
+                source_message_id=replied.get("message_id"),
+            )
         elif command == "/orders":
             menu = self.db.latest_menu(chat_id, ("open", "closed"))
             if not menu:
@@ -211,7 +224,13 @@ class LunchBot:
                 return
             self.close_order(menu["id"], chat_id)
 
-    def create_menu_draft(self, chat_id: int, text: str, reply_to: int | None = None) -> None:
+    def create_menu_draft(
+        self,
+        chat_id: int,
+        text: str,
+        reply_to: int | None = None,
+        source_message_id: int | None = None,
+    ) -> None:
         try:
             try:
                 parsed = parse_menu(text, datetime.now(self.timezone).date())
@@ -219,7 +238,14 @@ class LunchBot:
                 if not self.ai.enabled:
                     raise
                 parsed = self.ai.extract_menu(text, datetime.now(self.timezone).date())
-            menu_id = self.db.create_menu(chat_id, parsed)
+            menu_id = self.db.create_menu(chat_id, parsed, source_message_id)
+            if menu_id is None:
+                LOGGER.info(
+                    "Ignoring duplicate menu message %s in chat %s",
+                    source_message_id,
+                    chat_id,
+                )
+                return
             self.telegram.send_message(
                 chat_id,
                 menu_preview(parsed),
@@ -247,7 +273,9 @@ class LunchBot:
             self.telegram.answer_callback(callback_id, "Ro‘yxatdan o‘tdingiz ✅")
             return
 
-        if data.startswith(("menu_confirm:", "menu_cancel:", "payment_verify:", "payment_reject:")):
+        if data.startswith(
+            ("menu_confirm:", "menu_cancel:", "menu_close:", "payment_verify:", "payment_reject:")
+        ):
             if not self._is_group_admin(chat_id, user_id):
                 self.telegram.answer_callback(callback_id, "Faqat admin uchun", alert=True)
                 return
@@ -282,24 +310,21 @@ class LunchBot:
             self.telegram.answer_callback(callback_id, "Bekor qilindi")
             return
 
+        if data.startswith("menu_close:"):
+            menu_id = int(data.rsplit(":", 1)[1])
+            menu = self.db.get_menu(menu_id)
+            if not menu or menu["status"] != "open":
+                self.telegram.answer_callback(callback_id, "Buyurtma allaqachon yopilgan", alert=True)
+                return
+            self.close_order(menu_id, chat_id)
+            self.telegram.answer_callback(callback_id, "Buyurtma yopildi 🔒")
+            return
+
         if data.startswith("order:"):
             _, menu_id_raw, item_id_raw = data.split(":", 2)
             menu_id, item_id = int(menu_id_raw), int(item_id_raw)
             menu = self.db.get_menu(menu_id)
             if not menu or menu["status"] != "open":
-                self.telegram.answer_callback(callback_id, "Buyurtma yopilgan", alert=True)
-                return
-            now = datetime.now(self.timezone)
-            if now.date() != date.fromisoformat(menu["menu_date"]):
-                self.telegram.answer_callback(callback_id, "Bu bugungi menyu emas", alert=True)
-                return
-            if now.time() < parse_clock(self.config.order_open_time):
-                self.telegram.answer_callback(
-                    callback_id, f"Buyurtma {self.config.order_open_time} da ochiladi", alert=True
-                )
-                return
-            if now.time() >= parse_clock(self.config.order_close_time):
-                self.close_order(menu_id, chat_id)
                 self.telegram.answer_callback(callback_id, "Buyurtma yopilgan", alert=True)
                 return
             self.db.upsert_user(user_id, first_name, username)
@@ -404,17 +429,13 @@ class LunchBot:
                 date.fromisoformat(menu["menu_date"]),
                 menu["status"],
                 self.config.reminder_times,
-                self.config.order_close_time,
                 self.db.sent_reminders(menu["id"]),
             )
             if not action:
                 continue
-            action_type, labels = action
-            if action_type == "close":
-                self.close_order(menu["id"], menu["chat_id"])
-            else:
-                self.send_reminders(menu["id"], menu["chat_id"], labels[-1])
-                self.db.mark_reminders(menu["id"], labels)
+            _, labels = action
+            self.send_reminders(menu["id"], menu["chat_id"], labels[-1])
+            self.db.mark_reminders(menu["id"], labels)
 
     def send_reminders(self, menu_id: int, chat_id: int, label: str) -> None:
         missing = self.db.users_without_order(menu_id)
@@ -427,7 +448,7 @@ class LunchBot:
             self.telegram.send_message(
                 chat_id,
                 f"<b>⏰ {label} — tushlikni tanlang.{urgent}</b>\n{names}\n"
-                f"Buyurtma {self.config.order_close_time} da yopiladi.",
+                "Buyurtma admin yopmaguncha ochiq.",
             )
 
     def close_order(self, menu_id: int, chat_id: int) -> None:
@@ -435,6 +456,17 @@ class LunchBot:
         if not menu or menu["status"] != "open":
             return
         self.db.close_menu(menu_id)
+        if menu["order_message_id"]:
+            try:
+                items = self.db.get_menu_items(menu_id)
+                self.telegram.edit_message(
+                    chat_id,
+                    menu["order_message_id"],
+                    ordering_text(menu, items) + "\n\n<b>🔒 Buyurtma yopildi.</b>",
+                    {"inline_keyboard": []},
+                )
+            except TelegramError:
+                LOGGER.exception("Could not remove the closed order buttons")
         summary = self.db.order_summary(menu_id)
         self.telegram.send_message(chat_id, caterer_text(summary))
         self.telegram.send_message(chat_id, summary_text(summary, "🔒 Buyurtma yopildi"))

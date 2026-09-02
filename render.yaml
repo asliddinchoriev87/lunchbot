@@ -17,10 +17,6 @@ services:
         value: gpt-5-mini
       - key: TIMEZONE
         value: Asia/Tashkent
-      - key: ORDER_OPEN_TIME
-        value: "10:00"
-      - key: ORDER_CLOSE_TIME
-        value: "11:00"
       - key: REMINDER_TIMES
         value: 10:20,10:35,10:50
       - key: DATABASE_PATH

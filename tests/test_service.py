@@ -13,6 +13,7 @@ class FakeTelegram:
         self.sent = []
         self.edited = []
         self.answers = []
+        self.admin_ids = {1}
 
     def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
         result = {"message_id": len(self.sent) + 100}
@@ -35,7 +36,7 @@ class FakeTelegram:
         self.answers.append((callback_query_id, text, alert))
 
     def is_admin(self, chat_id, user_id):
-        return True
+        return user_id in self.admin_ids
 
     def download_file(self, file_id):
         return b"fake receipt image"
@@ -49,8 +50,6 @@ class ServiceWorkflowTests(unittest.TestCase):
             database_path=str(Path(self.temp_dir.name) / "service.db"),
             timezone="Asia/Tashkent",
             reminder_times=("10:20", "10:35", "10:50"),
-            order_open_time="10:00",
-            order_close_time="11:00",
             openai_api_key=None,
             openai_model="gpt-5-mini",
             payment_recipients=("Recipient",),
@@ -85,6 +84,8 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(self.bot.db.get_menu(draft["id"])["status"], "open")
         self.assertTrue(self.telegram.answers)
         self.assertIn("Bugungi tushlik", self.telegram.sent[-1]["text"])
+        close_button = self.telegram.sent[-1]["reply_markup"]["inline_keyboard"][-1][0]
+        self.assertEqual(close_button["callback_data"], f"menu_close:{draft['id']}")
 
     def test_receipt_without_ai_is_saved_for_review(self):
         self.bot.create_menu_draft(-1001, SAMPLE_MENU)
@@ -110,6 +111,32 @@ class ServiceWorkflowTests(unittest.TestCase):
         summary = self.bot.db.order_summary(menu["id"])
         self.assertEqual(summary.rows[0]["payment_status"], "needs_review")
         self.assertIn("Tekshirish kerak", self.telegram.sent[-1]["text"])
+
+    def test_only_admin_can_close_order(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU)
+        menu = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.db.confirm_menu(menu["id"])
+
+        callback = {
+            "id": "close-by-other",
+            "data": f"menu_close:{menu['id']}",
+            "from": {"id": 8, "first_name": "Other"},
+            "message": {"message_id": 101, "chat": {"id": -1001, "type": "supergroup"}},
+        }
+        self.bot.handle_callback(callback)
+        self.assertEqual(self.bot.db.get_menu(menu["id"])["status"], "open")
+        self.assertTrue(self.telegram.answers[-1][2])
+
+        callback["id"] = "close-by-admin"
+        callback["from"] = {"id": 1, "first_name": "Admin"}
+        self.bot.handle_callback(callback)
+        self.assertEqual(self.bot.db.get_menu(menu["id"])["status"], "closed")
+        self.assertIn("Buyurtma yopildi", self.telegram.answers[-1][1])
+
+    def test_duplicate_menu_message_is_ignored(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU, source_message_id=55)
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU, source_message_id=55)
+        self.assertEqual(len(self.telegram.sent), 1)
 
 
 if __name__ == "__main__":

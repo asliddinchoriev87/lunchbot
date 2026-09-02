@@ -10,8 +10,6 @@ class Config:
     database_path: str
     timezone: str
     reminder_times: tuple[str, ...]
-    order_open_time: str
-    order_close_time: str
     openai_api_key: str | None
     openai_model: str
     payment_recipients: tuple[str, ...]
@@ -38,8 +36,6 @@ class Config:
             database_path=os.getenv("DATABASE_PATH", "data/lunchbot.db"),
             timezone=os.getenv("TIMEZONE", "Asia/Tashkent"),
             reminder_times=reminder_times,
-            order_open_time=os.getenv("ORDER_OPEN_TIME", "10:00"),
-            order_close_time=os.getenv("ORDER_CLOSE_TIME", "11:00"),
             openai_api_key=os.getenv("OPENAI_API_KEY") or None,
             openai_model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
             payment_recipients=recipients,

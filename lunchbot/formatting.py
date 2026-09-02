@@ -49,8 +49,8 @@ def ordering_text(menu_row, items: list) -> str:
         f"<b>🍽 Bugungi tushlik — {menu_row['menu_date']}</b>\n\n"
         f"{item_lines}\n\n"
         f"Narx: <b>{money(menu_row['portion_price'])}</b>\n"
-        "Buyurtma <b>11:00</b> da yopiladi. Taomni tugma orqali tanlang. "
-        "Tanlovni 11:00 gacha o‘zgartirish mumkin."
+        "Taomni tugma orqali tanlang. Admin buyurtmani yopmaguncha "
+        "tanlovni o‘zgartirish mumkin."
     )
 
 
@@ -64,6 +64,14 @@ def order_keyboard(menu_id: int, items: list) -> dict:
                 }
             ]
             for row in items
+        ]
+        + [
+            [
+                {
+                    "text": "🔒 Buyurtmani yopish",
+                    "callback_data": f"menu_close:{menu_id}",
+                }
+            ]
         ]
     }
 

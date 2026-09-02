@@ -13,17 +13,10 @@ def due_action(
     menu_date: date,
     status: str,
     reminder_times: tuple[str, ...],
-    close_time: str,
     sent_labels: set[str],
 ) -> tuple[str, tuple[str, ...]] | None:
-    if status != "open" or now.date() < menu_date:
+    if status != "open" or now.date() != menu_date:
         return None
-
-    if now.date() > menu_date:
-        return ("close", ())
-
-    if now.time() >= parse_clock(close_time):
-        return ("close", ())
 
     due = [label for label in reminder_times if parse_clock(label) <= now.time()]
     if not due:

@@ -25,7 +25,9 @@ class DatabaseTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_registration_order_update_and_summary(self):
-        menu_id = self.db.create_menu(-1001, self.menu)
+        menu_id = self.db.create_menu(-1001, self.menu, source_message_id=55)
+        self.assertEqual(self.db.get_menu(menu_id)["source_message_id"], 55)
+        self.assertIsNone(self.db.create_menu(-1001, self.menu, source_message_id=55))
         self.assertTrue(self.db.confirm_menu(menu_id))
         items = self.db.get_menu_items(menu_id)
         self.db.upsert_user(1, "Asliddin", "asliddin")

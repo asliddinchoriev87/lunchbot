@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS menus (
     free_delivery_min INTEGER,
     status TEXT NOT NULL DEFAULT 'draft',
     order_message_id INTEGER,
+    source_message_id INTEGER,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS menu_items (
@@ -87,7 +88,22 @@ class Database:
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        self._migrate_schema()
         self.connection.commit()
+
+    def _migrate_schema(self) -> None:
+        columns = {
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(menus)").fetchall()
+        }
+        if "source_message_id" not in columns:
+            self.connection.execute(
+                "ALTER TABLE menus ADD COLUMN source_message_id INTEGER"
+            )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_menus_source "
+            "ON menus(chat_id, source_message_id) WHERE source_message_id IS NOT NULL"
+        )
 
     def close(self) -> None:
         self.connection.close()
@@ -114,27 +130,42 @@ class Database:
         )
         self.connection.commit()
 
-    def create_menu(self, chat_id: int, menu: ParsedMenu) -> int:
-        self.connection.execute(
-            "UPDATE menus SET status='cancelled' WHERE chat_id=? AND menu_date=? AND status='draft'",
-            (chat_id, menu.menu_date.isoformat()),
-        )
-        cursor = self.connection.execute(
-            """INSERT INTO menus(
-                 chat_id, menu_date, raw_text, portion_price, delivery_fee,
-                 free_delivery_min, status, created_at
-               ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?)""",
-            (
-                chat_id,
-                menu.menu_date.isoformat(),
-                menu.raw_text,
-                menu.portion_price,
-                menu.delivery_fee,
-                menu.free_delivery_min,
-                utc_now(),
-            ),
-        )
+    def create_menu(
+        self, chat_id: int, menu: ParsedMenu, source_message_id: int | None = None
+    ) -> int | None:
+        if source_message_id is not None:
+            existing = self.connection.execute(
+                "SELECT id FROM menus WHERE chat_id=? AND source_message_id=?",
+                (chat_id, source_message_id),
+            ).fetchone()
+            if existing:
+                return None
+        try:
+            cursor = self.connection.execute(
+                """INSERT INTO menus(
+                     chat_id, menu_date, raw_text, portion_price, delivery_fee,
+                     free_delivery_min, status, source_message_id, created_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?)""",
+                (
+                    chat_id,
+                    menu.menu_date.isoformat(),
+                    menu.raw_text,
+                    menu.portion_price,
+                    menu.delivery_fee,
+                    menu.free_delivery_min,
+                    source_message_id,
+                    utc_now(),
+                ),
+            )
+        except sqlite3.IntegrityError:
+            self.connection.rollback()
+            return None
         menu_id = int(cursor.lastrowid)
+        self.connection.execute(
+            "UPDATE menus SET status='cancelled' "
+            "WHERE chat_id=? AND menu_date=? AND status='draft' AND id<>?",
+            (chat_id, menu.menu_date.isoformat(), menu_id),
+        )
         self.connection.executemany(
             "INSERT INTO menu_items(menu_id, position, name, price) VALUES(?, ?, ?, ?)",
             [(menu_id, index, name, menu.portion_price) for index, name in enumerate(menu.items, 1)],
@@ -157,8 +188,8 @@ class Database:
         if not menu or menu["status"] != "draft":
             return False
         self.connection.execute(
-            "UPDATE menus SET status='cancelled' WHERE chat_id=? AND menu_date=? AND status='open'",
-            (menu["chat_id"], menu["menu_date"]),
+            "UPDATE menus SET status='cancelled' WHERE chat_id=? AND status='open'",
+            (menu["chat_id"],),
         )
         self.connection.execute("UPDATE menus SET status='open' WHERE id=?", (menu_id,))
         self.connection.commit()

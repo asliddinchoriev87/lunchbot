@@ -9,7 +9,8 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Lets an admin confirm the menu before ordering opens.
 - Uses Telegram buttons so each member can choose or change one meal.
 - Reminds only registered members who have not ordered at 10:20, 10:35 and 10:50.
-- Locks ordering at 11:00.
+- Keeps ordering open until an admin closes it.
+- Ignores duplicate delivery of the same forwarded Telegram message.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
 - Detects reused receipt images.
@@ -83,9 +84,10 @@ Telegram does not allow a bot to automatically retrieve every group member. Regi
 2. The bot shows an extracted preview.
 3. An admin presses **Confirm**.
 4. Members choose a meal using the buttons.
-5. The bot sends targeted reminders and closes orders at 11:00.
-6. Members send payment screenshots after ordering.
-7. The bot matches each screenshot to its sender and adds the payment status.
+5. The bot sends targeted reminders while ordering remains open.
+6. An admin presses **Close order** when everyone is finished.
+7. Members send payment screenshots after ordering.
+8. The bot matches each screenshot to its sender and adds the payment status.
 
 If a forwarded menu is not detected, an admin can reply to that message with `/menu`.
 
@@ -95,7 +97,7 @@ If a forwarded menu is not detected, an admin can reply to that message with `/m
 - `/register` — register for reminders.
 - `/menu` — parse the message being replied to; admin only.
 - `/orders` — show the latest order summary.
-- `/close` — close ordering immediately; admin only.
+- `/close` — close the current order; admin only.
 - `/help` — show instructions.
 
 ## Run tests
