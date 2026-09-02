@@ -62,16 +62,20 @@ class LunchBot:
             },
         )
 
-        offset: int | None = None
+        saved_offset = self.db.get_setting("telegram_update_offset")
+        offset = int(saved_offset) if saved_offset else None
         while True:
             try:
                 updates = self.telegram.get_updates(offset, timeout=10)
                 for update in updates:
-                    offset = int(update["update_id"]) + 1
+                    next_offset = int(update["update_id"]) + 1
                     try:
                         self.handle_update(update)
                     except Exception:
                         LOGGER.exception("Update %s failed", update.get("update_id"))
+                    finally:
+                        offset = next_offset
+                        self.db.set_setting("telegram_update_offset", str(offset))
                 self.process_schedules()
             except TelegramError:
                 LOGGER.exception("Telegram polling failed")
@@ -612,7 +616,20 @@ class LunchBot:
             else:
                 sent = self.telegram.send_message(menu["chat_id"], text, keyboard)
                 self.db.set_order_message_id(menu_id, sent["message_id"])
-        except TelegramError:
+        except TelegramError as exc:
+            error = str(exc).casefold()
+            if "message is not modified" in error:
+                return
+            if "message to edit not found" in error and menu["order_message_id"]:
+                try:
+                    sent = self.telegram.send_message(menu["chat_id"], text, keyboard)
+                    self.db.set_order_message_id(menu_id, sent["message_id"])
+                    return
+                except TelegramError:
+                    LOGGER.exception(
+                        "Could not recreate group dashboard for menu %s", menu_id
+                    )
+                    return
             LOGGER.exception("Could not refresh group dashboard for menu %s", menu_id)
 
     def show_private_order(self, chat_id: int, user_id: int, menu_id: int) -> None:

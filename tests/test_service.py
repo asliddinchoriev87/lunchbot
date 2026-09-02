@@ -4,6 +4,7 @@ from pathlib import Path
 
 from lunchbot.config import Config
 from lunchbot.service import LunchBot
+from lunchbot.telegram_api import TelegramError
 
 from test_parsing import SAMPLE_MENU
 
@@ -15,6 +16,7 @@ class FakeTelegram:
         self.answers = []
         self.photos = []
         self.admin_ids = {1}
+        self.edit_error = None
 
     def send_message(self, chat_id, text, reply_markup=None, reply_to_message_id=None):
         result = {"message_id": len(self.sent) + 100}
@@ -30,6 +32,8 @@ class FakeTelegram:
         return result
 
     def edit_message(self, chat_id, message_id, text, reply_markup=None):
+        if self.edit_error:
+            raise self.edit_error
         self.edited.append((chat_id, message_id, text, reply_markup))
         return {"message_id": message_id}
 
@@ -227,9 +231,41 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertIn("Buyurtma yopildi", self.telegram.answers[-1][1])
 
     def test_duplicate_menu_message_is_ignored(self):
-        self.bot.create_menu_draft(-1001, SAMPLE_MENU, source_message_id=55)
-        self.bot.create_menu_draft(-1001, SAMPLE_MENU, source_message_id=55)
+        self.bot.create_menu_draft(
+            -1001, SAMPLE_MENU, source_chat_id=7, source_message_id=55
+        )
+        self.bot.create_menu_draft(
+            -1001, SAMPLE_MENU, source_chat_id=7, source_message_id=56
+        )
         self.assertEqual(len(self.telegram.sent), 1)
+
+    def test_dashboard_not_modified_error_does_not_create_duplicate(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU)
+        menu = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.db.confirm_menu(menu["id"])
+        self.bot.db.set_order_message_id(menu["id"], 100)
+        sent_before = len(self.telegram.sent)
+        self.telegram.edit_error = TelegramError("Bad Request: message is not modified")
+
+        self.bot.refresh_group_dashboard(menu["id"])
+
+        self.assertEqual(len(self.telegram.sent), sent_before)
+
+    def test_missing_dashboard_is_recreated_once(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU)
+        menu = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.db.confirm_menu(menu["id"])
+        self.bot.db.set_order_message_id(menu["id"], 999)
+        sent_before = len(self.telegram.sent)
+        self.telegram.edit_error = TelegramError("Bad Request: message to edit not found")
+
+        self.bot.refresh_group_dashboard(menu["id"])
+
+        self.assertEqual(len(self.telegram.sent), sent_before + 1)
+        self.assertEqual(
+            self.bot.db.get_menu(menu["id"])["order_message_id"],
+            self.telegram.sent[-1]["message_id"],
+        )
 
 
 if __name__ == "__main__":

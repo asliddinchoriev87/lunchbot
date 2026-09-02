@@ -11,7 +11,8 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Moves meal selection, receipts and personal status into each member's private bot chat.
 - Sends private reminders only to members who have not ordered at 10:20, 10:35 and 10:50.
 - Keeps ordering open until an admin closes it.
-- Ignores duplicate delivery of the same forwarded Telegram message.
+- Ignores repeated Telegram updates and repeated copies of the same menu within 10 minutes.
+- Persists Telegram's update position so restarts do not replay old menus.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
 - Detects reused receipt images.

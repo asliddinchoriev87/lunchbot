@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 
 from .domain import OrderSummary, ParsedMenu, ReceiptAnalysis
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS menus (
     order_message_id INTEGER,
     source_chat_id INTEGER,
     source_message_id INTEGER,
+    dedupe_key TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS menu_items (
@@ -107,6 +109,10 @@ class Database:
             self.connection.execute(
                 "ALTER TABLE menus ADD COLUMN source_chat_id INTEGER"
             )
+        if "dedupe_key" not in columns:
+            self.connection.execute(
+                "ALTER TABLE menus ADD COLUMN dedupe_key TEXT"
+            )
         self.connection.execute(
             "UPDATE menus SET source_chat_id=chat_id "
             "WHERE source_message_id IS NOT NULL AND source_chat_id IS NULL"
@@ -116,6 +122,10 @@ class Database:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_menus_source "
             "ON menus(chat_id, source_chat_id, source_message_id) "
             "WHERE source_chat_id IS NOT NULL AND source_message_id IS NOT NULL"
+        )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_menus_dedupe "
+            "ON menus(chat_id, dedupe_key) WHERE dedupe_key IS NOT NULL"
         )
         user_columns = {
             row["name"]
@@ -178,6 +188,12 @@ class Database:
     ) -> int | None:
         if source_message_id is not None and source_chat_id is None:
             source_chat_id = chat_id
+        now = datetime.now(timezone.utc)
+        ten_minute_bucket = f"{now:%Y%m%d%H}{now.minute // 10}"
+        normalized_text = " ".join(menu.raw_text.casefold().split())
+        dedupe_key = hashlib.sha256(
+            f"{menu.menu_date.isoformat()}|{ten_minute_bucket}|{normalized_text}".encode("utf-8")
+        ).hexdigest()
         if source_message_id is not None:
             existing = self.connection.execute(
                 "SELECT id FROM menus "
@@ -186,13 +202,19 @@ class Database:
             ).fetchone()
             if existing:
                 return None
+        existing_content = self.connection.execute(
+            "SELECT id FROM menus WHERE chat_id=? AND dedupe_key=?",
+            (chat_id, dedupe_key),
+        ).fetchone()
+        if existing_content:
+            return None
         try:
             cursor = self.connection.execute(
                 """INSERT INTO menus(
                      chat_id, menu_date, raw_text, portion_price, delivery_fee,
                      free_delivery_min, status, source_chat_id, source_message_id,
-                     created_at
-                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""",
+                     dedupe_key, created_at
+                   ) VALUES(?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)""",
                 (
                     chat_id,
                     menu.menu_date.isoformat(),
@@ -202,7 +224,8 @@ class Database:
                     menu.free_delivery_min,
                     source_chat_id,
                     source_message_id,
-                    utc_now(),
+                    dedupe_key,
+                    now.isoformat(),
                 ),
             )
         except sqlite3.IntegrityError:

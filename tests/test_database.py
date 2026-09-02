@@ -1,6 +1,6 @@
+import sqlite3
 import tempfile
 import unittest
-import sqlite3
 from datetime import date
 from pathlib import Path
 
@@ -34,6 +34,11 @@ class DatabaseTests(unittest.TestCase):
         self.assertIsNone(
             self.db.create_menu(
                 -1001, self.menu, source_chat_id=7, source_message_id=55
+            )
+        )
+        self.assertIsNone(
+            self.db.create_menu(
+                -1001, self.menu, source_chat_id=7, source_message_id=56
             )
         )
         self.assertTrue(self.db.confirm_menu(menu_id))
@@ -103,6 +108,7 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("private_chat_id", user_columns)
         self.assertIn("telegram_file_id", payment_columns)
         self.assertIn("source_chat_id", menu_columns)
+        self.assertIn("dedupe_key", menu_columns)
 
 
 if __name__ == "__main__":
