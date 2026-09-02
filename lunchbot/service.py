@@ -14,6 +14,7 @@ from .database import Database
 from .domain import ReceiptAnalysis, evaluate_payment
 from .formatting import (
     PAYMENT_LABELS,
+    admin_control_keyboard,
     admin_menu_keyboard,
     group_dashboard_keyboard,
     group_dashboard_text,
@@ -22,6 +23,7 @@ from .formatting import (
     mention,
     money,
     payment_keyboard,
+    payment_step_text,
     private_order_keyboard,
     private_order_text,
     registration_keyboard,
@@ -57,6 +59,7 @@ class LunchBot:
                     {"command": "register", "description": "Eslatmalar uchun ro‘yxatdan o‘tish"},
                     {"command": "menu", "description": "Javob berilgan xabarni menyu qilish"},
                     {"command": "orders", "description": "Bugungi buyurtmalar"},
+                    {"command": "admin", "description": "Admin boshqaruvi"},
                     {"command": "close", "description": "Buyurtmani yopish (admin)"},
                     {"command": "help", "description": "Yordam"},
                 ]
@@ -257,6 +260,18 @@ class LunchBot:
             if command == "/orders":
                 self.show_personal_status(chat_id, user_id)
                 return
+            if command == "/admin":
+                group_id = self._configured_group()
+                menu = (
+                    self.db.latest_menu(group_id, ("open", "closed"))
+                    if group_id is not None
+                    else None
+                )
+                if not menu:
+                    self.telegram.send_message(chat_id, "Hozircha menyu yo‘q.")
+                    return
+                self.show_admin_controls(chat_id, user_id, menu["id"])
+                return
             if command in {"/start", "/help", "/register"}:
                 menu = None
                 group_id = self._configured_group()
@@ -279,7 +294,7 @@ class LunchBot:
                 "Admin: guruhda /setup yuboring.\n"
                 "A’zolar: shaxsiy chat tugmasini bir marta bosing.\n"
                 "Menyu: admin oshxona xabarini botga shaxsiy forward qiladi.\n"
-                "Yopish: admin Close tugmasini bosadi.\n"
+                "Admin boshqaruvi: botning shaxsiy chatida /admin yuboring.\n"
                 "To‘lov: buyurtmadan keyin chek rasmini botga shaxsiy yuboring.",
             )
             return
@@ -412,7 +427,13 @@ class LunchBot:
             return
 
         if data.startswith(
-            ("menu_confirm:", "menu_cancel:", "menu_close:")
+            (
+                "menu_confirm:",
+                "menu_cancel:",
+                "menu_close:",
+                "admin_full_orders:",
+                "admin_payments:",
+            )
         ):
             menu_id = int(data.rsplit(":", 1)[1])
             menu = self.db.get_menu(menu_id)
@@ -439,6 +460,7 @@ class LunchBot:
                     escape(message.get("text", "Menyu"))
                     + "\n\n<b>✅ Guruhda e’lon qilindi</b>",
                 )
+                self.show_admin_controls(chat_id, user_id, menu_id)
             self.telegram.answer_callback(callback_id, "Buyurtma ochildi ✅")
             return
 
@@ -460,7 +482,26 @@ class LunchBot:
                 self.telegram.answer_callback(callback_id, "Buyurtma allaqachon yopilgan", alert=True)
                 return
             self.close_order(menu_id, chat_id)
+            if chat.get("type") == "private":
+                self.telegram.edit_message(
+                    chat_id,
+                    message["message_id"],
+                    "<b>🛠 Admin boshqaruvi</b>\n\nHolat: <b>🔒 Yopilgan</b>",
+                    admin_control_keyboard(menu_id, False),
+                )
             self.telegram.answer_callback(callback_id, "Buyurtma yopildi 🔒")
+            return
+
+        if data.startswith("admin_full_orders:"):
+            menu_id = int(data.rsplit(":", 1)[1])
+            self.show_full_orders(chat_id, user_id, menu_id)
+            self.telegram.answer_callback(callback_id, "To‘liq ro‘yxat yuborildi ✅")
+            return
+
+        if data.startswith("admin_payments:"):
+            menu_id = int(data.rsplit(":", 1)[1])
+            self.show_admin_panel(chat_id, user_id, menu_id)
+            self.telegram.answer_callback(callback_id, "To‘lovlar yuborildi ✅")
             return
 
         if data.startswith("order:"):
@@ -485,8 +526,8 @@ class LunchBot:
                 self.telegram.edit_message(
                     chat_id,
                     message["message_id"],
-                    private_order_text(menu, self.db.get_menu_items(menu_id), order),
-                    private_order_keyboard(menu_id, self.db.get_menu_items(menu_id)),
+                    payment_step_text(menu, order),
+                    {"inline_keyboard": []},
                 )
             self.telegram.answer_callback(callback_id, f"Tanlandi: {item['name']} ✅")
             return
@@ -765,6 +806,18 @@ class LunchBot:
                 self.telegram.send_message(
                     chat_id, caption, payment_keyboard(payment["id"])
                 )
+
+    def show_admin_controls(self, chat_id: int, user_id: int, menu_id: int) -> None:
+        menu = self.db.get_menu(menu_id)
+        if not menu or not self._is_group_admin(menu["chat_id"], user_id):
+            self.telegram.send_message(chat_id, "Faqat guruh admini uchun.")
+            return
+        state = "🟢 Ochiq" if menu["status"] == "open" else "🔒 Yopilgan"
+        self.telegram.send_message(
+            chat_id,
+            f"<b>🛠 Admin boshqaruvi</b>\n\nHolat: <b>{state}</b>",
+            admin_control_keyboard(menu_id, menu["status"] == "open"),
+        )
 
     def show_full_orders(self, chat_id: int, user_id: int, menu_id: int) -> None:
         menu = self.db.get_menu(menu_id)

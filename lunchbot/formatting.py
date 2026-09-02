@@ -87,6 +87,17 @@ def private_order_keyboard(menu_id: int, items: list) -> dict:
     }
 
 
+def payment_step_text(menu_row, order) -> str:
+    return (
+        "<b>✅ Buyurtmangiz qabul qilindi</b>\n\n"
+        f"Taom: <b>{escape(order['meal_name'])}</b>\n"
+        f"To‘lov summasi: <b>{money(order['price'])}</b>\n"
+        f"To‘lov holati: <b>{PAYMENT_LABELS[order['payment_status']]}</b>\n\n"
+        "<b>Keyingi qadam:</b> Click yoki Payme orqali to‘lov qiling, "
+        "so‘ng chek rasmini shu chatga yuboring."
+    )
+
+
 def group_dashboard_text(menu_row, items: list, summary: OrderSummary) -> str:
     item_lines = "\n".join(
         f"{row['position']}. {escape(row['name'])}" for row in items
@@ -129,36 +140,28 @@ def group_dashboard_keyboard(menu_id: int, bot_username: str, is_open: bool) -> 
                 }
             ]
         )
-        rows.append(
-            [
-                {
-                    "text": "📋 Full orders (admin)",
-                    "url": f"https://t.me/{bot_username}?start=fullorders_{menu_id}",
-                },
-                {
-                    "text": "🧾 To‘lovlarni tekshirish",
-                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
-                }
-            ]
-        )
+    return {"inline_keyboard": rows}
+
+
+def admin_control_keyboard(menu_id: int, is_open: bool) -> dict:
+    rows = [
+        [
+            {
+                "text": "📋 Full orders",
+                "callback_data": f"admin_full_orders:{menu_id}",
+            },
+            {
+                "text": "🧾 To‘lovlar",
+                "callback_data": f"admin_payments:{menu_id}",
+            },
+        ]
+    ]
+    if is_open:
         rows.append(
             [
                 {
                     "text": "🔒 Buyurtmani yopish",
                     "callback_data": f"menu_close:{menu_id}",
-                }
-            ]
-        )
-    else:
-        rows.append(
-            [
-                {
-                    "text": "📋 Full orders (admin)",
-                    "url": f"https://t.me/{bot_username}?start=fullorders_{menu_id}",
-                },
-                {
-                    "text": "🧾 To‘lovlarni tekshirish",
-                    "url": f"https://t.me/{bot_username}?start=admin_{menu_id}",
                 }
             ]
         )

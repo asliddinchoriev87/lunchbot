@@ -110,8 +110,11 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.telegram.sent), 1)
         self.assertIn("Bugungi tushlik", self.telegram.edited[-1][2])
         dashboard_keyboard = self.telegram.edited[-1][3]
-        close_button = dashboard_keyboard["inline_keyboard"][-1][-1]
-        self.assertEqual(close_button["callback_data"], f"menu_close:{draft['id']}")
+        self.assertEqual(len(dashboard_keyboard["inline_keyboard"]), 1)
+        self.assertEqual(
+            dashboard_keyboard["inline_keyboard"][0][0]["text"],
+            "🍽 Taom tanlash — shaxsiy chat",
+        )
 
     def test_admin_submits_menu_privately_and_only_dashboard_goes_to_group(self):
         self.bot.handle_message(
@@ -142,6 +145,11 @@ class ServiceWorkflowTests(unittest.TestCase):
         group_messages = [row for row in self.telegram.sent if row["chat_id"] == -1001]
         self.assertEqual(len(group_messages), 1)
         self.assertIn("Buyurtmalar va to‘lovlar", group_messages[0]["text"])
+        self.assertEqual(
+            len(group_messages[0]["reply_markup"]["inline_keyboard"]), 1
+        )
+        admin_messages = [row for row in self.telegram.sent if row["chat_id"] == 1]
+        self.assertIn("Admin boshqaruvi", admin_messages[-1]["text"])
 
     def test_forwarded_menu_album_photos_are_not_treated_as_receipts(self):
         first = {
@@ -266,6 +274,27 @@ class ServiceWorkflowTests(unittest.TestCase):
         )
         self.assertTrue(any(edit[0] == -1001 for edit in self.telegram.edited))
         self.assertTrue(any(edit[0] == 7 for edit in self.telegram.edited))
+        private_edit = next(edit for edit in reversed(self.telegram.edited) if edit[0] == 7)
+        self.assertIn("Keyingi qadam", private_edit[2])
+        self.assertEqual(private_edit[3], {"inline_keyboard": []})
+
+    def test_private_admin_controls_show_full_orders_payments_and_close(self):
+        self.bot.create_menu_draft(-1001, SAMPLE_MENU)
+        menu = self.bot.db.latest_menu(-1001, ("draft",))
+        self.bot.db.confirm_menu(menu["id"])
+
+        self.bot.show_admin_controls(1, 1, menu["id"])
+
+        keyboard = self.telegram.sent[-1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(
+            keyboard[0][0]["callback_data"], f"admin_full_orders:{menu['id']}"
+        )
+        self.assertEqual(
+            keyboard[0][1]["callback_data"], f"admin_payments:{menu['id']}"
+        )
+        self.assertEqual(
+            keyboard[1][0]["callback_data"], f"menu_close:{menu['id']}"
+        )
 
     def test_reminder_is_sent_only_to_private_chat(self):
         self.bot.create_menu_draft(-1001, SAMPLE_MENU)

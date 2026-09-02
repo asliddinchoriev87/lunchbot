@@ -13,7 +13,8 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Keeps ordering open until an admin closes it.
 - Ignores repeated Telegram updates and repeated copies of the same menu within 10 minutes.
 - Treats a forwarded menu album as one menu and publishes all food photos to the group.
-- Gives admins a private **Full orders** list with every meal and payment status.
+- Shows normal members only one group button: **Choose meal — private chat**.
+- Gives admins a separate private control panel with full orders, payment review and closing.
 - Persists Telegram's update position so restarts do not replay old menus.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
@@ -86,12 +87,13 @@ Telegram does not allow a bot to automatically retrieve every group member or me
 1. An admin forwards the caterer's menu to the bot's private chat.
 2. The bot shows the extracted preview privately to that admin.
 3. The admin presses **Confirm**. The bot publishes the menu photos and the single live group dashboard.
-4. Members press **Choose meal — private chat** and select food inside the bot.
-5. The bot updates the same group dashboard instead of posting new order messages.
-6. Private reminders are sent while ordering remains open.
-7. Members send payment screenshots to the bot's private chat.
-8. The bot updates payment status beside each member's name on the group dashboard.
-9. An admin opens **Full orders** to see every order and payment status, reviews receipts in the payment panel, and closes the order from the dashboard.
+4. Members see only **Choose meal — private chat** in the group and select food inside the bot.
+5. After selecting, the bot immediately shows a simple payment step and asks for the receipt image.
+6. The bot updates the same group dashboard instead of posting new order messages.
+7. Private reminders are sent while ordering remains open.
+8. Members send payment screenshots to the bot's private chat.
+9. The bot updates payment status beside each member's name on the group dashboard.
+10. Admins use `/admin` privately to see full orders with payment statuses, review receipts and close ordering.
 
 If a forwarded menu is not detected, an admin can reply to that message with `/menu`.
 
@@ -101,6 +103,7 @@ If a forwarded menu is not detected, an admin can reply to that message with `/m
 - `/register` — open private registration instructions.
 - `/menu` — parse the message being replied to; admin only.
 - `/orders` — show personal order status in private chat; refresh the dashboard in the group.
+- `/admin` — open private admin controls; admin only.
 - `/close` — close the current order; admin only.
 - `/help` — show instructions.
 
