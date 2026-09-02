@@ -18,14 +18,13 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
 - Detects reused receipt images.
-- Lets an admin verify or reject AI-matched payments.
+- Keeps submitted receipts pending until an admin verifies or rejects them.
 
 ## Important payment rule
 
 Receipt AI is a pre-check, not bank confirmation. A screenshot can be edited. The bot uses these statuses:
 
 - `Unpaid`
-- `AI matched`
 - `Needs review`
 - `Verified by admin`
 - `Rejected`

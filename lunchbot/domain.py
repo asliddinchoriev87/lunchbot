@@ -118,4 +118,6 @@ def evaluate_payment(
         return PaymentDecision(
             "needs_review", True, True, "Receipt-reading confidence is too low"
         )
-    return PaymentDecision("ai_matched", True, True, "Amount and recipient match")
+    return PaymentDecision(
+        "needs_review", True, True, "Amount and recipient match; admin confirmation required"
+    )

@@ -155,6 +155,9 @@ class Database:
             self.connection.execute(
                 "ALTER TABLE payments ADD COLUMN telegram_file_id TEXT"
             )
+        self.connection.execute(
+            "UPDATE payments SET status='needs_review' WHERE status='ai_matched'"
+        )
 
     def close(self) -> None:
         self.connection.close()

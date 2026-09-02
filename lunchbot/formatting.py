@@ -9,7 +9,6 @@ from .domain import OrderSummary, ParsedMenu
 PAYMENT_LABELS = {
     "unpaid": "❌ To‘lanmagan",
     "needs_review": "🟡 Tekshirish kerak",
-    "ai_matched": "☑️ AI moslashtirdi",
     "verified": "✅ Tasdiqlangan",
     "rejected": "⛔ Rad etilgan",
 }
@@ -17,7 +16,6 @@ PAYMENT_LABELS = {
 PAYMENT_ICONS = {
     "unpaid": "❌",
     "needs_review": "🟡",
-    "ai_matched": "☑️",
     "verified": "✅",
     "rejected": "⛔",
 }
@@ -116,7 +114,7 @@ def group_dashboard_text(menu_row, items: list, summary: OrderSummary) -> str:
         f"Porsiyalar: <b>{summary.portion_count}</b> | "
         f"Jami: <b>{money(summary.grand_total)}</b> | "
         f"Yetkazish: <b>{delivery}</b>\n"
-        "To‘lov: ❌ yo‘q · 🟡 tekshirish · ☑️ AI mos · ✅ tasdiq"
+        "To‘lov: ❌ yo‘q · 🟡 tekshirish · ✅ tasdiq · ⛔ rad etilgan"
     )
 
 
@@ -171,7 +169,6 @@ def full_orders_pages(summary: OrderSummary, page_size: int = 35) -> list[str]:
     rows = summary.rows
     page_count = max(1, (len(rows) + page_size - 1) // page_size)
     verified = sum(row["payment_status"] == "verified" for row in rows)
-    ai_matched = sum(row["payment_status"] == "ai_matched" for row in rows)
     review = sum(row["payment_status"] == "needs_review" for row in rows)
     unpaid = sum(row["payment_status"] == "unpaid" for row in rows)
     pages: list[str] = []
@@ -189,7 +186,7 @@ def full_orders_pages(summary: OrderSummary, page_size: int = 35) -> list[str]:
             f"<b>📋 Full orders — {escape(summary.menu_date)}{page_label}</b>\n\n"
             f"{body}\n\n"
             f"Jami: <b>{summary.portion_count}</b> · "
-            f"✅ {verified} · ☑️ {ai_matched} · 🟡 {review} · ❌ {unpaid}"
+            f"✅ {verified} · 🟡 {review} · ❌ {unpaid}"
         )
     return pages
 
@@ -240,7 +237,6 @@ def summary_text(summary: OrderSummary, title: str = "📦 Buyurtmalar") -> str:
         sections.append(f"<b>{escape(meal)} — {len(rows)} ta</b>\n{names}")
     body = "\n\n".join(sections) if sections else "Hali buyurtma yo‘q."
     verified = sum(row["payment_status"] == "verified" for row in summary.rows)
-    matched = sum(row["payment_status"] == "ai_matched" for row in summary.rows)
     delivery = "Bepul" if summary.applied_delivery_fee == 0 else money(summary.applied_delivery_fee)
     return (
         f"<b>{title} — {escape(summary.menu_date)}</b>\n\n"
@@ -249,7 +245,7 @@ def summary_text(summary: OrderSummary, title: str = "📦 Buyurtmalar") -> str:
         f"Taomlar: <b>{money(summary.food_total)}</b>\n"
         f"Yetkazish: <b>{delivery}</b>\n"
         f"Jami: <b>{money(summary.grand_total)}</b>\n"
-        f"To‘lov: <b>{verified} tasdiqlangan</b>, {matched} AI moslashtirgan"
+        f"To‘lov: <b>{verified} tasdiqlangan</b>"
     )
 
 

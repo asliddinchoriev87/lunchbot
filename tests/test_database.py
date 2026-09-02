@@ -66,7 +66,7 @@ class DatabaseTests(unittest.TestCase):
 
         analysis = ReceiptAnalysis(35_000, "Recipient", None, True, 0.95)
         payment_id = self.db.add_payment(
-            summary.rows[0]["order_id"], "unique", "hash", 35_000, analysis, "ai_matched", "ok"
+            summary.rows[0]["order_id"], "unique", "hash", 35_000, analysis, "needs_review", "ok"
         )
         self.db.update_payment_status(payment_id, "verified")
         self.assertEqual(self.db.order_summary(menu_id).rows[0]["payment_status"], "verified")

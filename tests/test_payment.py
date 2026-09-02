@@ -5,7 +5,7 @@ from lunchbot.domain import ReceiptAnalysis, evaluate_payment
 
 
 class PaymentDecisionTests(unittest.TestCase):
-    def test_matching_receipt_is_ai_matched(self):
+    def test_matching_receipt_still_requires_admin_review(self):
         analysis = ReceiptAnalysis(
             amount=35_000,
             recipient_name="Demo Recipient",
@@ -16,7 +16,7 @@ class PaymentDecisionTests(unittest.TestCase):
         decision = evaluate_payment(
             analysis, 35_000, ("Demo Recipient",), expected_date=date(2026, 9, 2)
         )
-        self.assertEqual(decision.status, "ai_matched")
+        self.assertEqual(decision.status, "needs_review")
 
     def test_wrong_amount_requires_review(self):
         analysis = ReceiptAnalysis(
