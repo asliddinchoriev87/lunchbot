@@ -19,6 +19,7 @@ from .formatting import (
     group_dashboard_keyboard,
     group_dashboard_text,
     full_orders_pages,
+    admin_menu_all_keyboard,
     menu_preview,
     mention,
     money,
@@ -55,7 +56,7 @@ class LunchBot:
             "setMyCommands",
             {
                 "commands": [
-                    {"command": "setup", "description": "Guruhni sozlash (admin)"},
+                    {"command": "setup", "description": "Guruhni ulash (admin)"},
                     {"command": "register", "description": "Eslatmalar uchun ro‘yxatdan o‘tish"},
                     {"command": "menu", "description": "Javob berilgan xabarni menyu qilish"},
                     {"command": "orders", "description": "Bugungi buyurtmalar"},
@@ -94,6 +95,8 @@ class LunchBot:
             self.handle_callback(update["callback_query"])
         elif "message" in update:
             self.handle_message(update["message"])
+        elif "my_chat_member" in update:
+            self.handle_my_chat_member(update["my_chat_member"])
 
     @staticmethod
     def _message_text(message: dict) -> str:
@@ -106,6 +109,24 @@ class LunchBot:
     def _configured_group(self) -> int | None:
         value = self.db.get_setting("group_chat_id")
         return int(value) if value else None
+
+    def _admin_groups(self, user_id: int) -> list:
+        groups = []
+        for group in self.db.registered_groups():
+            if self._is_group_admin(group["chat_id"], user_id):
+                groups.append(group)
+        return groups
+
+    def handle_my_chat_member(self, change: dict) -> None:
+        chat = change.get("chat") or {}
+        if chat.get("type") not in {"group", "supergroup"}:
+            return
+        status = (change.get("new_chat_member") or {}).get("status")
+        chat_id = int(chat["id"])
+        if status in {"member", "administrator"}:
+            self.db.register_group(chat_id, chat.get("title") or "Lunch group")
+        elif status in {"left", "kicked"}:
+            self.db.deactivate_group(chat_id)
 
     @staticmethod
     def _photo_file_id(message: dict) -> str | None:
@@ -140,16 +161,26 @@ class LunchBot:
         configured_group = self._configured_group()
         if text and looks_like_menu(text):
             if chat.get("type") == "private":
-                if configured_group is None:
+                groups = self._admin_groups(user_id)
+                if not groups:
                     self.telegram.send_message(
-                        chat_id, "Avval admin guruhda /setup yuborishi kerak."
+                        chat_id,
+                        "Botni guruhga admin qilib qo‘shing yoki guruhda /setup yuboring.",
                     )
                     return
-                if not self._is_group_admin(configured_group, user_id):
-                    self.telegram.send_message(
-                        chat_id, "Menyuni faqat guruh admini yuborishi mumkin."
+                if len(groups) > 1:
+                    self.create_group_menu_drafts(
+                        groups,
+                        text,
+                        preview_chat_id=chat_id,
+                        reply_to=message["message_id"],
+                        source_chat_id=chat_id,
+                        source_message_id=message["message_id"],
+                        media_group_id=message.get("media_group_id"),
+                        photo_file_id=self._photo_file_id(message),
                     )
                     return
+                configured_group = int(groups[0]["chat_id"])
                 self.create_menu_draft(
                     configured_group,
                     text,
@@ -162,9 +193,12 @@ class LunchBot:
                 )
                 return
 
-            if configured_group == chat_id:
+            if chat.get("type") in {"group", "supergroup"}:
                 forwarded = bool(message.get("forward_origin"))
                 if forwarded or self._is_group_admin(chat_id, user_id):
+                    if not self._is_group_admin(chat_id, user_id):
+                        return
+                    self.db.register_group(chat_id, chat.get("title") or "Lunch group")
                     self.db.upsert_user(user_id, first_name, username)
                     self.create_menu_draft(
                         chat_id,
@@ -182,13 +216,14 @@ class LunchBot:
             message.get("document", {}).get("mime_type", "").startswith("image/")
         )
         if is_image:
-            if message.get("media_group_id") and configured_group is not None:
-                menu = self.db.menu_for_album(
-                    configured_group, chat_id, message["media_group_id"]
-                )
+            if message.get("media_group_id"):
+                menus = self.db.menus_for_album(chat_id, message["media_group_id"])
                 file_id = self._photo_file_id(message)
-                if menu and file_id:
-                    self.db.add_menu_photo(menu["id"], message["message_id"], file_id)
+                if file_id:
+                    for menu in menus:
+                        self.db.add_menu_photo(
+                            menu["id"], message["message_id"], file_id
+                        )
                 LOGGER.info(
                     "Stored or ignored menu album image %s", message.get("message_id")
                 )
@@ -199,11 +234,9 @@ class LunchBot:
                     message.get("message_id"),
                 )
                 return
-            if chat.get("type") == "private" and configured_group is not None:
-                self.handle_receipt(
-                    message, user_id, first_name, username, configured_group
-                )
-            elif configured_group == chat_id:
+            if chat.get("type") == "private" and self.db.registered_groups():
+                self.handle_receipt(message, user_id, first_name, username)
+            elif self.db.is_registered_group(chat_id):
                 self.telegram.send_message(
                     chat_id,
                     "Chekni guruhga emas, botning shaxsiy chatiga yuboring.",
@@ -212,7 +245,7 @@ class LunchBot:
                 )
             return
 
-        if configured_group != chat_id:
+        if not self.db.is_registered_group(chat_id):
             return
 
     def handle_command(
@@ -261,16 +294,18 @@ class LunchBot:
                 self.show_personal_status(chat_id, user_id)
                 return
             if command == "/admin":
-                group_id = self._configured_group()
-                menu = (
-                    self.db.latest_menu(group_id, ("open", "closed"))
-                    if group_id is not None
-                    else None
-                )
-                if not menu:
+                found = False
+                for group in self._admin_groups(user_id):
+                    menu = self.db.latest_menu(
+                        group["chat_id"], ("open", "closed")
+                    )
+                    if menu:
+                        found = True
+                        self.show_admin_controls(
+                            chat_id, user_id, menu["id"], group["title"]
+                        )
+                if not found:
                     self.telegram.send_message(chat_id, "Hozircha menyu yo‘q.")
-                    return
-                self.show_admin_controls(chat_id, user_id, menu["id"])
                 return
             if command in {"/start", "/help", "/register"}:
                 menu = None
@@ -307,7 +342,7 @@ class LunchBot:
             if not self._is_group_admin(chat_id, user_id):
                 self.telegram.send_message(chat_id, "Faqat guruh admini sozlashi mumkin.")
                 return
-            self.db.set_setting("group_chat_id", str(chat_id))
+            self.db.register_group(chat_id, chat.get("title") or "Lunch group")
             self.db.upsert_user(user_id, first_name, username)
             self.telegram.send_message(
                 chat_id,
@@ -318,7 +353,7 @@ class LunchBot:
             )
             return
 
-        if self._configured_group() != chat_id:
+        if not self.db.is_registered_group(chat_id):
             self.telegram.send_message(chat_id, "Avval guruh admini /setup yuborishi kerak.")
             return
 
@@ -361,6 +396,62 @@ class LunchBot:
                 self.telegram.send_message(chat_id, "Ochiq buyurtma yo‘q.")
                 return
             self.close_order(menu["id"], chat_id)
+
+    def create_group_menu_drafts(
+        self,
+        groups: list,
+        text: str,
+        preview_chat_id: int,
+        reply_to: int,
+        source_chat_id: int,
+        source_message_id: int,
+        media_group_id: str | None = None,
+        photo_file_id: str | None = None,
+    ) -> None:
+        try:
+            try:
+                parsed = parse_menu(text, datetime.now(self.timezone).date())
+            except ValueError:
+                if not self.ai.enabled:
+                    raise
+                parsed = self.ai.extract_menu(
+                    text, datetime.now(self.timezone).date()
+                )
+            targets: list[tuple[int, str]] = []
+            for group in groups:
+                menu_id = self.db.create_menu(
+                    int(group["chat_id"]),
+                    parsed,
+                    source_chat_id=source_chat_id,
+                    source_message_id=source_message_id,
+                    media_group_id=media_group_id,
+                )
+                if menu_id is None:
+                    continue
+                if photo_file_id:
+                    self.db.add_menu_photo(
+                        menu_id, source_message_id, photo_file_id
+                    )
+                targets.append((menu_id, group["title"]))
+            if not targets:
+                return
+            group_names = "\n".join(
+                f"• {escape(title)}" for _, title in targets
+            )
+            self.telegram.send_message(
+                preview_chat_id,
+                menu_preview(parsed)
+                + f"\n\n<b>Quyidagi {len(targets)} ta guruhga yuboriladi:</b>\n"
+                + group_names,
+                admin_menu_all_keyboard(targets[0][0]),
+                reply_to_message_id=reply_to,
+            )
+        except (ValueError, AIError) as exc:
+            self.telegram.send_message(
+                preview_chat_id,
+                "❌ Menyuni tushunmadim.\n" f"Sabab: {escape(str(exc))}",
+                reply_to_message_id=reply_to,
+            )
 
     def create_menu_draft(
         self,
@@ -429,7 +520,9 @@ class LunchBot:
         if data.startswith(
             (
                 "menu_confirm:",
+                "menu_confirm_all:",
                 "menu_cancel:",
+                "menu_cancel_all:",
                 "menu_close:",
                 "admin_full_orders:",
                 "admin_payments:",
@@ -441,6 +534,55 @@ class LunchBot:
             if not self._is_group_admin(group_chat_id, user_id):
                 self.telegram.answer_callback(callback_id, "Faqat admin uchun", alert=True)
                 return
+
+        if data.startswith("menu_confirm_all:"):
+            menu_id = int(data.rsplit(":", 1)[1])
+            drafts = self.db.batch_drafts(menu_id)
+            if not drafts:
+                self.telegram.answer_callback(
+                    callback_id, "Menyu allaqachon qayta ishlangan", alert=True
+                )
+                return
+            groups = {
+                group["chat_id"]: group["title"]
+                for group in self.db.registered_groups()
+            }
+            published = 0
+            for draft in drafts:
+                if not self._is_group_admin(draft["chat_id"], user_id):
+                    continue
+                if not self.db.confirm_menu(draft["id"]):
+                    continue
+                self.publish_menu_photos(draft["id"])
+                self.refresh_group_dashboard(draft["id"])
+                self.show_admin_controls(
+                    chat_id,
+                    user_id,
+                    draft["id"],
+                    groups.get(draft["chat_id"], "Lunch group"),
+                )
+                published += 1
+            self.telegram.edit_message(
+                chat_id,
+                message["message_id"],
+                escape(message.get("text", "Menyu"))
+                + f"\n\n<b>✅ {published} ta guruhga yuborildi</b>",
+            )
+            self.telegram.answer_callback(
+                callback_id, f"{published} ta guruhga yuborildi ✅"
+            )
+            return
+
+        if data.startswith("menu_cancel_all:"):
+            menu_id = int(data.rsplit(":", 1)[1])
+            self.db.cancel_batch_drafts(menu_id)
+            self.telegram.edit_message(
+                chat_id,
+                message["message_id"],
+                escape(message.get("text", "Menyu")) + "\n\n<b>❌ Bekor qilindi</b>",
+            )
+            self.telegram.answer_callback(callback_id, "Bekor qilindi")
+            return
 
         if data.startswith("menu_confirm:"):
             menu_id = int(data.rsplit(":", 1)[1])
@@ -563,13 +705,12 @@ class LunchBot:
         user_id: int,
         first_name: str,
         username: str | None,
-        group_chat_id: int,
     ) -> None:
         chat_id = int(message["chat"]["id"])
         self.db.upsert_user(
             user_id, first_name, username, private_chat_id=chat_id
         )
-        order = self.db.latest_order_for_user(group_chat_id, user_id)
+        order = self.db.latest_order_for_user_any(user_id)
         if not order:
             self.telegram.send_message(
                 chat_id,
@@ -737,8 +878,7 @@ class LunchBot:
 
     def show_private_order(self, chat_id: int, user_id: int, menu_id: int) -> None:
         menu = self.db.get_menu(menu_id)
-        configured_group = self._configured_group()
-        if not menu or menu["chat_id"] != configured_group:
+        if not menu or not self.db.is_registered_group(menu["chat_id"]):
             self.telegram.send_message(chat_id, "Menyu topilmadi.")
             return
         items = self.db.get_menu_items(menu_id)
@@ -753,12 +893,7 @@ class LunchBot:
         )
 
     def show_personal_status(self, chat_id: int, user_id: int) -> None:
-        group_id = self._configured_group()
-        order = (
-            self.db.latest_order_for_user(group_id, user_id)
-            if group_id is not None
-            else None
-        )
+        order = self.db.latest_order_for_user_any(user_id)
         if not order:
             self.telegram.send_message(chat_id, "Hozircha buyurtmangiz yo‘q.")
             return
@@ -807,15 +942,22 @@ class LunchBot:
                     chat_id, caption, payment_keyboard(payment["id"])
                 )
 
-    def show_admin_controls(self, chat_id: int, user_id: int, menu_id: int) -> None:
+    def show_admin_controls(
+        self,
+        chat_id: int,
+        user_id: int,
+        menu_id: int,
+        group_title: str | None = None,
+    ) -> None:
         menu = self.db.get_menu(menu_id)
         if not menu or not self._is_group_admin(menu["chat_id"], user_id):
             self.telegram.send_message(chat_id, "Faqat guruh admini uchun.")
             return
         state = "🟢 Ochiq" if menu["status"] == "open" else "🔒 Yopilgan"
+        group_line = f"Guruh: <b>{escape(group_title)}</b>\n" if group_title else ""
         self.telegram.send_message(
             chat_id,
-            f"<b>🛠 Admin boshqaruvi</b>\n\nHolat: <b>{state}</b>",
+            f"<b>🛠 Admin boshqaruvi</b>\n\n{group_line}Holat: <b>{state}</b>",
             admin_control_keyboard(menu_id, menu["status"] == "open"),
         )
 

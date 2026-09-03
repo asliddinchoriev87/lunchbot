@@ -1,6 +1,7 @@
 # LunchBot
 
 LunchBot automates daily food ordering in one private Telegram group.
+LunchBot can also work in multiple private groups with separate menus and orders.
 
 ## What it does
 
@@ -15,6 +16,8 @@ LunchBot automates daily food ordering in one private Telegram group.
 - Treats a forwarded menu album as one menu and publishes all food photos to the group.
 - Shows normal members only one group button: **Choose meal — private chat**.
 - Gives admins a separate private control panel with full orders, payment review and closing.
+- Automatically registers a group when the bot is added as an administrator.
+- Publishes a privately forwarded menu to every connected group where the sender is an admin after one confirmation.
 - Persists Telegram's update position so restarts do not replay old menus.
 - Creates both a caterer-ready order and an internal summary.
 - Matches receipt screenshots to the sender's order.
@@ -81,6 +84,8 @@ The `/data` volume preserves orders and payments after a restart.
 4. Every member presses **Open bot privately** once and starts the bot.
 
 Telegram does not allow a bot to automatically retrieve every group member or message a person before they start the bot. Opening the private chat once is necessary for private reminders.
+
+Adding the bot as an administrator is normally enough to register a new group. `/setup` remains available as a manual fallback.
 
 ## Daily use
 

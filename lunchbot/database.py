@@ -22,6 +22,12 @@ CREATE TABLE IF NOT EXISTS users (
     active INTEGER NOT NULL DEFAULT 1,
     registered_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS groups (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS menus (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id INTEGER NOT NULL,
@@ -102,6 +108,7 @@ class Database:
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
         self._migrate_schema()
+        self._apply_requested_history_reset()
         self.connection.commit()
 
     def _migrate_schema(self) -> None:
@@ -158,6 +165,16 @@ class Database:
         self.connection.execute(
             "UPDATE payments SET status='needs_review' WHERE status='ai_matched'"
         )
+        legacy_group = self.get_setting("group_chat_id")
+        if legacy_group:
+            self.register_group(int(legacy_group), "Lunch group", make_default=False)
+
+    def _apply_requested_history_reset(self) -> None:
+        reset_key = "orders_history_cleared_2026_09_03"
+        if self.get_setting(reset_key):
+            return
+        self.connection.execute("DELETE FROM menus")
+        self.set_setting(reset_key, utc_now())
 
     def close(self) -> None:
         self.connection.close()
@@ -173,6 +190,43 @@ class Database:
     def get_setting(self, key: str) -> str | None:
         row = self.connection.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    def register_group(
+        self, chat_id: int, title: str, make_default: bool = True
+    ) -> None:
+        self.connection.execute(
+            """INSERT INTO groups(chat_id, title, active, added_at)
+               VALUES(?, ?, 1, ?)
+               ON CONFLICT(chat_id) DO UPDATE SET
+                 title=excluded.title, active=1""",
+            (chat_id, title or "Lunch group", utc_now()),
+        )
+        if make_default:
+            self.connection.execute(
+                "INSERT INTO settings(key, value) VALUES('group_chat_id', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (str(chat_id),),
+            )
+        self.connection.commit()
+
+    def deactivate_group(self, chat_id: int) -> None:
+        self.connection.execute(
+            "UPDATE groups SET active=0 WHERE chat_id=?", (chat_id,)
+        )
+        self.connection.commit()
+
+    def registered_groups(self) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM groups WHERE active=1 ORDER BY added_at DESC"
+            ).fetchall()
+        )
+
+    def is_registered_group(self, chat_id: int) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM groups WHERE chat_id=? AND active=1", (chat_id,)
+        ).fetchone()
+        return row is not None
 
     def upsert_user(
         self,
@@ -269,6 +323,51 @@ class Database:
             "AND media_group_id=? ORDER BY id DESC LIMIT 1",
             (chat_id, source_chat_id, media_group_id),
         ).fetchone()
+
+    def menus_for_album(
+        self, source_chat_id: int, media_group_id: str
+    ) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                "SELECT * FROM menus WHERE source_chat_id=? AND media_group_id=? "
+                "AND status='draft' ORDER BY id",
+                (source_chat_id, media_group_id),
+            ).fetchall()
+        )
+
+    def cancel_sibling_drafts(self, menu_id: int) -> None:
+        menu = self.get_menu(menu_id)
+        if not menu:
+            return
+        self.connection.execute(
+            "UPDATE menus SET status='cancelled' WHERE status='draft' AND id<>? "
+            "AND source_chat_id=? AND source_message_id=?",
+            (menu_id, menu["source_chat_id"], menu["source_message_id"]),
+        )
+        self.connection.commit()
+
+    def batch_drafts(self, menu_id: int) -> list[sqlite3.Row]:
+        menu = self.get_menu(menu_id)
+        if not menu:
+            return []
+        return list(
+            self.connection.execute(
+                "SELECT * FROM menus WHERE status='draft' AND source_chat_id=? "
+                "AND source_message_id=? ORDER BY id",
+                (menu["source_chat_id"], menu["source_message_id"]),
+            ).fetchall()
+        )
+
+    def cancel_batch_drafts(self, menu_id: int) -> None:
+        menu = self.get_menu(menu_id)
+        if not menu:
+            return
+        self.connection.execute(
+            "UPDATE menus SET status='cancelled' WHERE status='draft' "
+            "AND source_chat_id=? AND source_message_id=?",
+            (menu["source_chat_id"], menu["source_message_id"]),
+        )
+        self.connection.commit()
 
     def add_menu_photo(
         self, menu_id: int, source_message_id: int, telegram_file_id: str
@@ -420,6 +519,26 @@ class Database:
                ORDER BY m.id DESC LIMIT 1""",
             (chat_id, user_id),
         ).fetchone()
+
+    def latest_order_for_user_any(self, user_id: int) -> sqlite3.Row | None:
+        return self.connection.execute(
+            """SELECT o.id AS order_id, o.menu_id, mi.price, mi.name AS meal_name,
+                      m.menu_date, m.status AS menu_status, m.chat_id,
+                      COALESCE((
+                        SELECT p.status FROM payments p
+                        WHERE p.order_id=o.id ORDER BY p.id DESC LIMIT 1
+                      ), 'unpaid') AS payment_status
+               FROM orders o
+               JOIN menus m ON m.id=o.menu_id
+               JOIN menu_items mi ON mi.id=o.item_id
+               WHERE o.user_id=? AND m.status IN ('open','closed')
+               ORDER BY o.updated_at DESC, m.id DESC LIMIT 1""",
+            (user_id,),
+        ).fetchone()
+
+    def clear_order_history(self) -> None:
+        self.connection.execute("DELETE FROM menus")
+        self.connection.commit()
 
     def order_for_user(self, menu_id: int, user_id: int) -> sqlite3.Row | None:
         return self.connection.execute(

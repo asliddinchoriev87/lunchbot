@@ -82,7 +82,7 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.telegram = FakeTelegram()
         self.bot.telegram = self.telegram
         self.bot.bot_username = "test_lunchbot"
-        self.bot.db.set_setting("group_chat_id", "-1001")
+        self.bot.db.register_group(-1001, "Main lunch group")
 
     def tearDown(self):
         self.bot.db.close()
@@ -230,7 +230,6 @@ class ServiceWorkflowTests(unittest.TestCase):
             user_id=7,
             first_name="Asliddin",
             username="asliddin",
-            group_chat_id=-1001,
         )
 
         summary = self.bot.db.order_summary(menu["id"])
@@ -295,6 +294,65 @@ class ServiceWorkflowTests(unittest.TestCase):
         self.assertEqual(
             keyboard[1][0]["callback_data"], f"menu_close:{menu['id']}"
         )
+
+    def test_new_admin_group_is_registered_and_accepts_menu(self):
+        self.bot.handle_my_chat_member(
+            {
+                "chat": {"id": -2002, "type": "supergroup", "title": "Second group"},
+                "new_chat_member": {"status": "administrator"},
+            }
+        )
+        self.assertTrue(self.bot.db.is_registered_group(-2002))
+
+        self.bot.handle_message(
+            {
+                "message_id": 90,
+                "text": SAMPLE_MENU,
+                "forward_origin": {"type": "channel"},
+                "from": {"id": 1, "first_name": "Admin"},
+                "chat": {"id": -2002, "type": "supergroup", "title": "Second group"},
+            }
+        )
+
+        self.assertIsNotNone(self.bot.db.latest_menu(-2002, ("draft",)))
+        self.assertEqual(self.telegram.sent[-1]["chat_id"], -2002)
+
+    def test_private_menu_can_publish_to_all_admin_groups(self):
+        self.bot.db.register_group(-2002, "Second group")
+
+        self.bot.handle_message(
+            {
+                "message_id": 91,
+                "text": SAMPLE_MENU,
+                "forward_origin": {"type": "channel"},
+                "from": {"id": 1, "first_name": "Admin"},
+                "chat": {"id": 1, "type": "private"},
+            }
+        )
+
+        keyboard = self.telegram.sent[-1]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(len(keyboard), 1)
+        self.assertTrue(
+            keyboard[0][0]["callback_data"].startswith("menu_confirm_all:")
+        )
+        self.bot.handle_callback(
+            {
+                "id": "confirm-all",
+                "data": keyboard[0][0]["callback_data"],
+                "from": {"id": 1, "first_name": "Admin"},
+                "message": {
+                    "message_id": self.telegram.sent[-1]["message_id"],
+                    "text": self.telegram.sent[-1]["text"],
+                    "chat": {"id": 1, "type": "private"},
+                },
+            }
+        )
+        self.assertIsNotNone(self.bot.db.latest_menu(-1001, ("open",)))
+        self.assertIsNotNone(self.bot.db.latest_menu(-2002, ("open",)))
+        dashboard_groups = {
+            row["chat_id"] for row in self.telegram.sent if row["chat_id"] < 0
+        }
+        self.assertEqual(dashboard_groups, {-1001, -2002})
 
     def test_reminder_is_sent_only_to_private_chat(self):
         self.bot.create_menu_draft(-1001, SAMPLE_MENU)

@@ -119,6 +119,21 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn("dedupe_key", menu_columns)
         self.assertIn("media_group_id", menu_columns)
 
+    def test_clear_order_history_preserves_users_and_groups(self):
+        self.db.register_group(-1001, "Main group")
+        self.db.upsert_user(1, "Admin", "admin", private_chat_id=1)
+        menu_id = self.db.create_menu(-1001, self.menu)
+        self.assertIsNotNone(menu_id)
+
+        self.db.clear_order_history()
+
+        self.assertIsNone(self.db.get_menu(menu_id))
+        self.assertTrue(self.db.is_registered_group(-1001))
+        user = self.db.connection.execute(
+            "SELECT * FROM users WHERE user_id=1"
+        ).fetchone()
+        self.assertIsNotNone(user)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -218,6 +218,23 @@ def admin_menu_keyboard(menu_id: int) -> dict:
     }
 
 
+def admin_menu_all_keyboard(anchor_menu_id: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ Barcha guruhlarga yuborish",
+                    "callback_data": f"menu_confirm_all:{anchor_menu_id}",
+                },
+                {
+                    "text": "❌ Bekor qilish",
+                    "callback_data": f"menu_cancel_all:{anchor_menu_id}",
+                },
+            ]
+        ]
+    }
+
+
 def payment_keyboard(payment_id: int) -> dict:
     return {
         "inline_keyboard": [
